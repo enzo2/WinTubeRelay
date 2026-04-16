@@ -1,0 +1,834 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WinTubeRelay</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            min-height: 100vh;
+            color: #fff;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            font-weight: 300;
+            letter-spacing: 2px;
+        }
+        
+        .card {
+            background: rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .form-group {
+            margin-bottom: 16px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 8px;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            opacity: 0.8;
+        }
+        
+        input[type="text"],
+        input[type="password"] {
+            width: 100%;
+            padding: 12px 16px;
+            border: none;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.9);
+            color: #333;
+            font-size: 16px;
+        }
+        
+        input[type="text"]:focus,
+        input[type="password"]:focus {
+            outline: none;
+            box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.3);
+        }
+        
+        .checkbox-group {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+        
+        input[type="checkbox"] {
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+        }
+        
+        .btn {
+            padding: 14px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 600;
+        }
+        
+        .btn-primary {
+            background: #ff6b6b;
+            color: white;
+            width: 100%;
+        }
+        
+        .btn-primary:hover {
+            background: #ff5252;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(255, 107, 107, 0.4);
+        }
+        
+        .controls {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+        }
+        
+        .btn-control {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            padding: 16px;
+        }
+        
+        .btn-control:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+        
+        .btn-control:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .volume-control {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+        
+        input[type="range"] {
+            flex: 1;
+            height: 8px;
+            -webkit-appearance: none;
+            background: rgba(255, 255, 255, 0.3);
+            border-radius: 4px;
+            outline: none;
+        }
+        
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 24px;
+            height: 24px;
+            background: #ff6b6b;
+            border-radius: 50%;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        
+        input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.1);
+            box-shadow: 0 0 0 4px rgba(255, 107, 107, 0.3);
+        }
+        
+        .volume-value {
+            min-width: 50px;
+            text-align: center;
+            font-weight: 600;
+        }
+        
+        .status {
+            font-size: 14px;
+            line-height: 1.8;
+        }
+        
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .status-item:last-child {
+            border-bottom: none;
+        }
+
+        .saved-list {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .saved-row {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 12px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .saved-meta {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .saved-name {
+            font-weight: 600;
+            margin-bottom: 4px;
+            word-break: break-word;
+        }
+
+        .saved-url {
+            font-size: 12px;
+            opacity: 0.75;
+            word-break: break-all;
+        }
+
+        .saved-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .btn-small {
+            padding: 8px 12px;
+            font-size: 12px;
+        }
+
+        .inline-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 12px;
+            flex-wrap: wrap;
+        }
+        
+        .status-label {
+            opacity: 0.7;
+        }
+        
+        .status-value {
+            font-weight: 500;
+        }
+        
+        .message {
+            margin-top: 12px;
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            display: none;
+        }
+        
+        .message.success {
+            background: rgba(76, 175, 80, 0.9);
+            display: block;
+        }
+        
+        .message.error {
+            background: rgba(244, 67, 54, 0.9);
+            display: block;
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-top-color: white;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-left: 8px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .api-key-input {
+            margin-top: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+            <h1>WinTubeRelay</h1>
+        
+        <div class="card">
+            <div class="api-key-input" id="apiKeyInput">
+                <label>API Key (optional)</label>
+                <input type="password" id="apiKey" placeholder="Enter API key if required">
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="form-group">
+                <label>YouTube URL</label>
+                <input type="text" id="urlInput" placeholder="https://www.youtube.com/watch?v=...">
+            </div>
+            
+            <div class="checkbox-group">
+                <input type="checkbox" id="enqueueCheck">
+                <label for="enqueueCheck" style="margin: 0; text-transform: none; font-size: 16px;">Add to queue</label>
+            </div>
+            
+            <button class="btn btn-primary" onclick="play()">
+                <span id="playText">Play</span>
+                <span id="playSpinner" class="loading" style="display: none;"></span>
+            </button>
+            
+            <div id="message" class="message"></div>
+        </div>
+
+        <div class="card">
+            <label>Playback Controls</label>
+            <div class="controls">
+                <button class="btn btn-control" onclick="pause()">Pause</button>
+                <button class="btn btn-control" onclick="resume()">Resume</button>
+                <button class="btn btn-control" onclick="toggle()">Toggle</button>
+                <button class="btn btn-control" onclick="stop()">Stop</button>
+                <button class="btn btn-control" onclick="skip()">Skip</button>
+                <button class="btn btn-control" onclick="quit()">Quit</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <label>Favorites</label>
+            <div class="form-group">
+                <label>Favorite Name</label>
+                <input type="text" id="favoriteNameInput" placeholder="My playlist or station">
+            </div>
+            <div class="form-group">
+                <label>Favorite URL</label>
+                <input type="text" id="favoriteUrlInput" placeholder="https://www.youtube.com/watch?v=...">
+            </div>
+            <div class="inline-actions">
+                <button class="btn btn-control btn-small" onclick="useCurrentUrlForFavorite()">Use Current URL</button>
+                <button class="btn btn-control btn-small" onclick="addFavorite()">Add Favorite</button>
+                <button class="btn btn-control btn-small" onclick="clearFavorites()">Clear Favorites</button>
+            </div>
+            <div class="saved-list" id="favoritesList" style="margin-top: 16px;"></div>
+        </div>
+
+        <div class="card">
+            <label>Recent</label>
+            <div class="inline-actions">
+                <button class="btn btn-control btn-small" onclick="refreshSavedData()">Refresh</button>
+                <button class="btn btn-control btn-small" onclick="clearRecent()">Clear Recent</button>
+            </div>
+            <div class="saved-list" id="recentList" style="margin-top: 16px;"></div>
+        </div>
+
+        <div class="card">
+            <label>Volume Control</label>
+            <div class="volume-control">
+                <input type="range" id="volumeSlider" min="0" max="100" value="50" onchange="setVolume(this.value)">
+                <span class="volume-value" id="volumeValue">50%</span>
+            </div>
+            <div class="controls" style="margin-top: 16px;">
+                <button class="btn btn-control" onclick="mute()">Mute</button>
+                <button class="btn btn-control" onclick="unmute()">Unmute</button>
+            </div>
+        </div>
+
+        <div class="card">
+            <label>Status</label>
+            <div class="status" id="status">
+                <div class="status-item">
+                    <span class="status-label">Title:</span>
+                    <span class="status-value" id="statusTitle">-</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Status:</span>
+                    <span class="status-value" id="statusState">-</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Position:</span>
+                    <span class="status-value" id="statusPosition">-</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Volume:</span>
+                    <span class="status-value" id="statusVolume">-</span>
+                </div>
+                <div class="status-item">
+                    <span class="status-label">Playlist:</span>
+                    <span class="status-value" id="statusPlaylist">-</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '';
+        
+        function getHeaders() {
+            const headers = {
+                'Content-Type': 'application/json'
+            };
+            const apiKey = document.getElementById('apiKey').value;
+            if (apiKey) {
+                headers['x-api-key'] = apiKey;
+            }
+            return headers;
+        }
+        
+        function showMessage(text, isError = false) {
+            const msg = document.getElementById('message');
+            msg.textContent = text;
+            msg.className = 'message ' + (isError ? 'error' : 'success');
+            setTimeout(() => {
+                msg.className = 'message';
+            }, 3000);
+        }
+        
+        function setLoading(elementId, loading) {
+            const text = document.getElementById(elementId + 'Text');
+            const spinner = document.getElementById(elementId + 'Spinner');
+            if (loading) {
+                if (text) text.style.display = 'none';
+                if (spinner) spinner.style.display = 'inline-block';
+            } else {
+                if (text) text.style.display = 'inline';
+                if (spinner) spinner.style.display = 'none';
+            }
+        }
+        
+        async function play() {
+            const url = document.getElementById('urlInput').value;
+            if (!url) {
+                showMessage('Please enter a YouTube URL', true);
+                return;
+            }
+            
+            setLoading('play', true);
+            
+            try {
+                const response = await fetch(`${API_BASE}/play`, {
+                    method: 'POST',
+                    headers: getHeaders(),
+                    body: JSON.stringify({
+                        url: url,
+                        enqueue: document.getElementById('enqueueCheck').checked
+                    })
+                });
+                
+                if (response.ok) {
+                    showMessage('Playing: ' + url);
+                    document.getElementById('urlInput').value = '';
+                    updateStatus();
+                    refreshSavedData();
+                } else {
+                    const error = await response.text();
+                    showMessage('Error: ' + error, true);
+                }
+            } catch (err) {
+                showMessage('Error: ' + err.message, true);
+            }
+            
+            setLoading('play', false);
+        }
+        
+        async function stop() {
+            try {
+                const response = await fetch(`${API_BASE}/stop`, {
+                    method: 'POST',
+                    headers: getHeaders()
+                });
+                if (response.ok) {
+                    showMessage('Stopped');
+                    updateStatus();
+                }
+            } catch (err) {
+                showMessage('Error: ' + err.message, true);
+            }
+        }
+        
+        async function pause() {
+            try {
+                const response = await fetch(`${API_BASE}/pause`, {
+                    method: 'POST',
+                    headers: getHeaders()
+                });
+                if (response.ok) {
+                    showMessage('Paused');
+                    updateStatus();
+                }
+            } catch (err) {
+                showMessage('Error: ' + err.message, true);
+            }
+        }
+        
+        async function resume() {
+            try {
+                const response = await fetch(`${API_BASE}/resume`, {
+                    method: 'POST',
+                    headers: getHeaders()
+                });
+                if (response.ok) {
+                    showMessage('Resumed');
+                    updateStatus();
+                }
+            } catch (err) {
+                showMessage('Error: ' + err.message, true);
+            }
+        }
+        
+        async function toggle() {
+            try {
+                const response = await fetch(`${API_BASE}/toggle`, {
+                    method: 'POST',
+                    headers: getHeaders()
+                });
+                if (response.ok) {
+                    showMessage('Toggled');
+                    updateStatus();
+                }
+            } catch (err) {
+                showMessage('Error: ' + err.message, true);
+            }
+        }
+        
+        async function skip() {
+            try {
+                const response = await fetch(`${API_BASE}/skip`, {
+                    method: 'POST',
+                    headers: getHeaders()
+                });
+                if (response.ok) {
+                    showMessage('Skipped to next');
+                    updateStatus();
+                }
+            } catch (err) {
+                showMessage('Error: ' + err.message, true);
+            }
+        }
+        
+        async function quit() {
+            try {
+                const response = await fetch(`${API_BASE}/quit`, {
+                    method: 'POST',
+                    headers: getHeaders()
+                });
+                if (response.ok) {
+                    showMessage('Quit MPV');
+                    updateStatus();
+                }
+            } catch (err) {
+                showMessage('Error: ' + err.message, true);
+            }
+        }
+        
+        async function setVolume(level) {
+            document.getElementById('volumeValue').textContent = level + '%';
+            
+            try {
+                const response = await fetch(`${API_BASE}/volume`, {
+                    method: 'POST',
+                    headers: getHeaders(),
+                    body: JSON.stringify({ level: parseFloat(level) })
+                });
+                if (response.ok) {
+                    showMessage('Volume set to ' + level + '%');
+                    updateStatus();
+                }
+            } catch (err) {
+                showMessage('Error: ' + err.message, true);
+            }
+        }
+        
+        async function mute() {
+            try {
+                const response = await fetch(`${API_BASE}/mute`, {
+                    method: 'POST',
+                    headers: getHeaders()
+                });
+                if (response.ok) {
+                    showMessage('Muted');
+                    updateStatus();
+                }
+            } catch (err) {
+                showMessage('Error: ' + err.message, true);
+            }
+        }
+        
+        async function unmute() {
+            try {
+                const response = await fetch(`${API_BASE}/unmute`, {
+                    method: 'POST',
+                    headers: getHeaders()
+                });
+                if (response.ok) {
+                    showMessage('Unmuted');
+                    updateStatus();
+                }
+            } catch (err) {
+                showMessage('Error: ' + err.message, true);
+            }
+        }
+        
+        async function updateStatus() {
+            try {
+                const response = await fetch(`${API_BASE}/status`, {
+                    headers: getHeaders()
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    const props = data.props || {};
+                    
+                    document.getElementById('statusTitle').textContent = props['media-title'] || '-';
+                    document.getElementById('statusState').textContent = props.pause === true ? 'Paused' : 
+                                                                          props.pause === false ? 'Playing' : '-';
+                    
+                    const position = props['time-pos'];
+                    const duration = props['duration'];
+                    if (position !== null && duration !== null) {
+                        const posMin = Math.floor(position / 60);
+                        const posSec = Math.floor(position % 60);
+                        const durMin = Math.floor(duration / 60);
+                        const durSec = Math.floor(duration % 60);
+                        document.getElementById('statusPosition').textContent = 
+                            `${posMin}:${posSec.toString().padStart(2, '0')} / ${durMin}:${durSec.toString().padStart(2, '0')}`;
+                    } else {
+                        document.getElementById('statusPosition').textContent = '-';
+                    }
+                    
+                    const volume = props.volume;
+                    if (volume !== null) {
+                        document.getElementById('statusVolume').textContent = 
+                            Math.round(volume) + '%' + (props.mute ? ' (Muted)' : '');
+                        document.getElementById('volumeSlider').value = volume;
+                        document.getElementById('volumeValue').textContent = Math.round(volume) + '%';
+                    } else {
+                        document.getElementById('statusVolume').textContent = '-';
+                    }
+                    
+                    const playlistPos = props['playlist-pos'];
+                    const playlistCount = props['playlist-count'];
+                    if (playlistPos !== null && playlistCount !== null && playlistCount > 0) {
+                        document.getElementById('statusPlaylist').textContent = 
+                            `${playlistPos + 1} of ${playlistCount}`;
+                    } else {
+                        document.getElementById('statusPlaylist').textContent = '-';
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to update status:', err);
+            }
+        }
+
+        async function addFavorite() {
+            const url = document.getElementById('favoriteUrlInput').value.trim();
+            const name = document.getElementById('favoriteNameInput').value.trim();
+
+            if (!url) {
+                showMessage('Please enter a YouTube URL for the favorite', true);
+                return;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/favorites`, {
+                    method: 'POST',
+                    headers: getHeaders(),
+                    body: JSON.stringify({ url, name: name || null })
+                });
+
+                if (response.ok) {
+                    showMessage('Favorite saved');
+                    document.getElementById('favoriteNameInput').value = '';
+                    document.getElementById('favoriteUrlInput').value = '';
+                    refreshSavedData();
+                } else {
+                    showMessage('Error: ' + await response.text(), true);
+                }
+            } catch (err) {
+                showMessage('Error: ' + err.message, true);
+            }
+        }
+
+        function useCurrentUrlForFavorite() {
+            document.getElementById('favoriteUrlInput').value = document.getElementById('urlInput').value.trim();
+        }
+
+        async function clearFavorites() {
+            await postNoBody('/favorites/clear', 'Favorites cleared');
+            refreshSavedData();
+        }
+
+        async function clearRecent() {
+            await postNoBody('/recent/clear', 'Recent history cleared');
+            refreshSavedData();
+        }
+
+        async function removeFavorite(url) {
+            try {
+                const response = await fetch(`${API_BASE}/favorites/remove`, {
+                    method: 'POST',
+                    headers: getHeaders(),
+                    body: JSON.stringify({ url })
+                });
+
+                if (response.ok) {
+                    showMessage('Favorite removed');
+                    refreshSavedData();
+                } else {
+                    showMessage('Error: ' + await response.text(), true);
+                }
+            } catch (err) {
+                showMessage('Error: ' + err.message, true);
+            }
+        }
+
+        async function playSavedUrl(url, enqueue = false) {
+            document.getElementById('urlInput').value = url;
+            document.getElementById('enqueueCheck').checked = enqueue;
+            await play();
+        }
+
+        async function refreshSavedData() {
+            await Promise.all([refreshFavorites(), refreshRecent()]);
+        }
+
+        async function refreshFavorites() {
+            try {
+                const response = await fetch(`${API_BASE}/favorites`, {
+                    headers: getHeaders()
+                });
+
+                if (!response.ok) {
+                    return;
+                }
+
+                const data = await response.json();
+                renderSavedList('favoritesList', data.items || [], true);
+            } catch (err) {
+                console.error('Failed to refresh favorites:', err);
+            }
+        }
+
+        async function refreshRecent() {
+            try {
+                const response = await fetch(`${API_BASE}/recent`, {
+                    headers: getHeaders()
+                });
+
+                if (!response.ok) {
+                    return;
+                }
+
+                const data = await response.json();
+                renderSavedList('recentList', data.items || [], false);
+            } catch (err) {
+                console.error('Failed to refresh recents:', err);
+            }
+        }
+
+        function renderSavedList(elementId, items, canRemove) {
+            const container = document.getElementById(elementId);
+            container.innerHTML = '';
+
+            if (!items.length) {
+                const empty = document.createElement('div');
+                empty.className = 'saved-row';
+                empty.textContent = canRemove ? 'No favorites yet' : 'No recent URLs yet';
+                container.appendChild(empty);
+                return;
+            }
+
+            items.forEach(item => {
+                const row = document.createElement('div');
+                row.className = 'saved-row';
+
+                const meta = document.createElement('div');
+                meta.className = 'saved-meta';
+
+                const name = document.createElement('div');
+                name.className = 'saved-name';
+                name.textContent = item.name || item.url;
+
+                const url = document.createElement('div');
+                url.className = 'saved-url';
+                url.textContent = item.url;
+
+                meta.appendChild(name);
+                meta.appendChild(url);
+
+                const actions = document.createElement('div');
+                actions.className = 'saved-actions';
+
+                const playButton = document.createElement('button');
+                playButton.className = 'btn btn-control btn-small';
+                playButton.textContent = 'Play';
+                playButton.onclick = () => playSavedUrl(item.url, false);
+                actions.appendChild(playButton);
+
+                const queueButton = document.createElement('button');
+                queueButton.className = 'btn btn-control btn-small';
+                queueButton.textContent = 'Queue';
+                queueButton.onclick = () => playSavedUrl(item.url, true);
+                actions.appendChild(queueButton);
+
+                if (canRemove) {
+                    const removeButton = document.createElement('button');
+                    removeButton.className = 'btn btn-control btn-small';
+                    removeButton.textContent = 'Remove';
+                    removeButton.onclick = () => removeFavorite(item.url);
+                    actions.appendChild(removeButton);
+                }
+
+                row.appendChild(meta);
+                row.appendChild(actions);
+                container.appendChild(row);
+            });
+        }
+
+        async function postNoBody(path, successMessage) {
+            try {
+                const response = await fetch(`${API_BASE}${path}`, {
+                    method: 'POST',
+                    headers: getHeaders()
+                });
+
+                if (response.ok) {
+                    showMessage(successMessage);
+                } else {
+                    showMessage('Error: ' + await response.text(), true);
+                }
+            } catch (err) {
+                showMessage('Error: ' + err.message, true);
+            }
+        }
+        
+        // Update status every 2 seconds
+        setInterval(updateStatus, 2000);
+        updateStatus();
+        refreshSavedData();
+    </script>
+</body>
+</html>
