@@ -1,11 +1,19 @@
 # WinTubeRelay
 
-A fresh C# Windows tray app for routed YouTube audio playback.
+A Windows tray app for sending YouTube and YouTube Music playback to a specific audio output device.
+
+WinTubeRelay exists for the case where normal browser playback is not enough:
+
+- you want a small local web API and web UI for remote control from your local network
+- you want lightweight transport controls without leaving a browser tab open in the foreground
+- you want YouTube audio on one specific output, such as an HDMI monitor, TV, receiver, or dedicated speaker path
+- you want that output choice to stay fixed across plays and restarts
+
+In practice, it acts as a small Windows controller around `mpv` and `yt-dlp`. The app takes a YouTube URL, starts playback through `mpv`, forces audio to the selected Windows endpoint, and gives you both a tray menu and a local HTTP control surface.
 
 This version is a tray-resident WinForms app that:
 
 - shows a tray icon with a context menu
-- uses a custom code-drawn branded tray icon instead of the default app icon
 - enumerates active Windows audio output devices
 - lets you pick the preferred output from the tray menu
 - persists the selected output and player settings across restarts in `%AppData%\WinTubeRelay\settings.json`
@@ -77,5 +85,4 @@ publish\win-x64\WinTubeRelay.exe
 - Audio device enumeration uses `NAudio`.
 - `mpv` is started on demand and then controlled over its named pipe.
 - Audio output selection is converted from the Windows endpoint ID into the `wasapi/{guid}` form that `mpv --audio-device=help` reports.
-- The web UI/API mirrors the old `megafire_player` port and endpoint layout, including optional `x-api-key` auth when configured in settings.
 - The web UI also includes favorites/recent management, backed by the same persisted settings file as the tray app.
