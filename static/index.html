@@ -13,10 +13,10 @@
         
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+            background: linear-gradient(135deg, #101820 0%, #233d4d 52%, #4f2d36 100%);
             min-height: 100vh;
-            color: #fff;
-            padding: 20px;
+            color: #f8fafc;
+            padding: 16px;
         }
         
         .container {
@@ -26,18 +26,19 @@
         
         h1 {
             text-align: center;
-            margin-bottom: 30px;
-            font-weight: 300;
+            margin-bottom: 18px;
+            font-weight: 650;
             letter-spacing: 2px;
         }
         
         .card {
-            background: rgba(255, 255, 255, 0.1);
+            background: rgba(12, 18, 27, 0.74);
             backdrop-filter: blur(10px);
-            border-radius: 16px;
-            padding: 24px;
-            margin-bottom: 20px;
-            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 10px;
+            padding: 18px;
+            margin-bottom: 16px;
+            border: 1px solid rgba(226, 232, 240, 0.14);
+            box-shadow: 0 16px 38px rgba(0, 0, 0, 0.22);
         }
         
         .form-group {
@@ -50,77 +51,85 @@
             font-size: 14px;
             text-transform: uppercase;
             letter-spacing: 1px;
-            opacity: 0.8;
+            color: #cbd5e1;
         }
         
-        input[type="text"],
-        input[type="password"] {
+        input[type="text"] {
             width: 100%;
             padding: 12px 16px;
-            border: none;
+            border: 1px solid rgba(148, 163, 184, 0.4);
             border-radius: 8px;
-            background: rgba(255, 255, 255, 0.9);
-            color: #333;
+            background: rgba(248, 250, 252, 0.94);
+            color: #111827;
             font-size: 16px;
         }
         
-        input[type="text"]:focus,
-        input[type="password"]:focus {
+        input[type="text"]:focus {
             outline: none;
-            box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.3);
-        }
-        
-        .checkbox-group {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-bottom: 16px;
-        }
-        
-        input[type="checkbox"] {
-            width: 20px;
-            height: 20px;
-            cursor: pointer;
+            border-color: #f97316;
+            box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.26);
         }
         
         .btn {
             padding: 14px 24px;
-            border: none;
+            border: 1px solid transparent;
             border-radius: 8px;
             font-size: 16px;
             cursor: pointer;
-            transition: all 0.3s ease;
+            transition: background 0.2s ease, border-color 0.2s ease, transform 0.2s ease, box-shadow 0.2s ease;
             text-transform: uppercase;
             letter-spacing: 1px;
             font-weight: 600;
         }
+
+        .play-actions {
+            display: grid;
+            gap: 10px;
+        }
         
         .btn-primary {
-            background: #ff6b6b;
-            color: white;
+            background: #f97316;
+            color: #111827;
             width: 100%;
         }
         
         .btn-primary:hover {
-            background: #ff5252;
+            background: #fb923c;
             transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(255, 107, 107, 0.4);
+            box-shadow: 0 4px 14px rgba(249, 115, 22, 0.36);
+        }
+
+        .btn-secondary {
+            background: rgba(20, 184, 166, 0.16);
+            border-color: rgba(45, 212, 191, 0.34);
+            color: #ccfbf1;
+            width: 100%;
+        }
+
+        .btn-secondary:hover {
+            background: rgba(20, 184, 166, 0.26);
+            border-color: rgba(94, 234, 212, 0.58);
+            transform: translateY(-2px);
         }
         
         .controls {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
+            grid-template-columns: repeat(auto-fit, minmax(min(100%, 8rem), 1fr));
             gap: 12px;
         }
         
         .btn-control {
-            background: rgba(255, 255, 255, 0.2);
-            color: white;
+            background: rgba(248, 250, 252, 0.1);
+            border-color: rgba(226, 232, 240, 0.16);
+            color: #f8fafc;
             padding: 16px;
+            min-width: 0;
+            white-space: normal;
         }
         
         .btn-control:hover {
-            background: rgba(255, 255, 255, 0.3);
+            background: rgba(248, 250, 252, 0.17);
+            border-color: rgba(226, 232, 240, 0.3);
         }
         
         .btn-control:disabled {
@@ -132,13 +141,14 @@
             display: flex;
             align-items: center;
             gap: 16px;
+            margin-top: 12px;
         }
         
         input[type="range"] {
             flex: 1;
             height: 8px;
             -webkit-appearance: none;
-            background: rgba(255, 255, 255, 0.3);
+            background: rgba(203, 213, 225, 0.36);
             border-radius: 4px;
             outline: none;
         }
@@ -147,7 +157,7 @@
             -webkit-appearance: none;
             width: 24px;
             height: 24px;
-            background: #ff6b6b;
+            background: #14b8a6;
             border-radius: 50%;
             cursor: pointer;
             transition: all 0.2s ease;
@@ -155,7 +165,7 @@
         
         input[type="range"]::-webkit-slider-thumb:hover {
             transform: scale(1.1);
-            box-shadow: 0 0 0 4px rgba(255, 107, 107, 0.3);
+            box-shadow: 0 0 0 4px rgba(20, 184, 166, 0.24);
         }
         
         .volume-value {
@@ -172,8 +182,9 @@
         .status-item {
             display: flex;
             justify-content: space-between;
+            gap: 16px;
             padding: 8px 0;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            border-bottom: 1px solid rgba(226, 232, 240, 0.12);
         }
         
         .status-item:last-child {
@@ -192,8 +203,9 @@
             align-items: center;
             justify-content: space-between;
             padding: 10px 12px;
-            border-radius: 10px;
-            background: rgba(255, 255, 255, 0.08);
+            border-radius: 8px;
+            background: rgba(248, 250, 252, 0.08);
+            border: 1px solid rgba(226, 232, 240, 0.08);
         }
 
         .saved-meta {
@@ -236,6 +248,8 @@
         
         .status-value {
             font-weight: 500;
+            overflow-wrap: anywhere;
+            text-align: right;
         }
         
         .message {
@@ -247,12 +261,12 @@
         }
         
         .message.success {
-            background: rgba(76, 175, 80, 0.9);
+            background: rgba(20, 184, 166, 0.9);
             display: block;
         }
         
         .message.error {
-            background: rgba(244, 67, 54, 0.9);
+            background: rgba(220, 38, 38, 0.92);
             display: block;
         }
         
@@ -271,93 +285,122 @@
             to { transform: rotate(360deg); }
         }
         
-        .api-key-input {
-            margin-top: 12px;
+        .control-section {
+            margin-top: 18px;
+        }
+
+        @media (max-width: 520px) {
+            .saved-row {
+                align-items: stretch;
+                flex-direction: column;
+            }
+
+            .saved-meta {
+                width: 100%;
+            }
+
+            .saved-actions {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(min(100%, 7rem), 1fr));
+                width: 100%;
+            }
+
+            .saved-actions .btn-small {
+                min-width: 0;
+                white-space: normal;
+            }
+
+            .status-item {
+                align-items: flex-start;
+                flex-direction: column;
+                gap: 2px;
+            }
+
+            .status-value {
+                text-align: left;
+            }
+        }
+
+        @media (min-width: 700px) {
+            .play-actions {
+                grid-template-columns: 1fr 1fr;
+            }
+        }
+
+        @media (min-width: 900px) {
+            body {
+                padding: 28px;
+            }
+
+            .container {
+                display: grid;
+                grid-template-columns: minmax(0, 1.05fr) minmax(340px, 0.95fr);
+                grid-template-areas:
+                    "title title"
+                    "play status"
+                    "controls status"
+                    "favorites recent";
+                gap: 18px;
+                max-width: 1120px;
+            }
+
+            h1 {
+                grid-area: title;
+                margin-bottom: 2px;
+                text-align: left;
+            }
+
+            .card {
+                margin-bottom: 0;
+            }
+
+            .play-card {
+                grid-area: play;
+            }
+
+            .status-card {
+                grid-area: status;
+            }
+
+            .controls-card {
+                grid-area: controls;
+            }
+
+            .favorites-card {
+                grid-area: favorites;
+            }
+
+            .recent-card {
+                grid-area: recent;
+            }
         }
     </style>
 </head>
 <body>
     <div class="container">
-            <h1>WinTubeRelay</h1>
+        <h1>WinTubeRelay</h1>
         
-        <div class="card">
-            <div class="api-key-input" id="apiKeyInput">
-                <label>API Key (optional)</label>
-                <input type="password" id="apiKey" placeholder="Enter API key if required">
-            </div>
-        </div>
-
-        <div class="card">
+        <div class="card play-card">
             <div class="form-group">
                 <label>YouTube URL</label>
                 <input type="text" id="urlInput" placeholder="https://www.youtube.com/watch?v=...">
             </div>
             
-            <div class="checkbox-group">
-                <input type="checkbox" id="enqueueCheck">
-                <label for="enqueueCheck" style="margin: 0; text-transform: none; font-size: 16px;">Add to queue</label>
+            <div class="play-actions">
+                <button class="btn btn-primary" onclick="play(false, 'play')">
+                    <span id="playText">Play Now</span>
+                    <span id="playSpinner" class="loading" style="display: none;"></span>
+                </button>
+                <button class="btn btn-secondary" onclick="play(true, 'queue')">
+                    <span id="queueText">Add to Queue</span>
+                    <span id="queueSpinner" class="loading" style="display: none;"></span>
+                </button>
             </div>
-            
-            <button class="btn btn-primary" onclick="play()">
-                <span id="playText">Play</span>
-                <span id="playSpinner" class="loading" style="display: none;"></span>
-            </button>
             
             <div id="message" class="message"></div>
         </div>
 
-        <div class="card">
-            <label>Playback Controls</label>
-            <div class="controls">
-                <button class="btn btn-control" onclick="pause()">Pause</button>
-                <button class="btn btn-control" onclick="resume()">Resume</button>
-                <button class="btn btn-control" onclick="toggle()">Toggle</button>
-                <button class="btn btn-control" onclick="stop()">Stop</button>
-                <button class="btn btn-control" onclick="skip()">Skip</button>
-                <button class="btn btn-control" onclick="quit()">Quit</button>
-            </div>
-        </div>
-
-        <div class="card">
-            <label>Favorites</label>
-            <div class="form-group">
-                <label>Favorite Name</label>
-                <input type="text" id="favoriteNameInput" placeholder="My playlist or station">
-            </div>
-            <div class="form-group">
-                <label>Favorite URL</label>
-                <input type="text" id="favoriteUrlInput" placeholder="https://www.youtube.com/watch?v=...">
-            </div>
-            <div class="inline-actions">
-                <button class="btn btn-control btn-small" onclick="useCurrentUrlForFavorite()">Use Current URL</button>
-                <button class="btn btn-control btn-small" onclick="addFavorite()">Add Favorite</button>
-                <button class="btn btn-control btn-small" onclick="clearFavorites()">Clear Favorites</button>
-            </div>
-            <div class="saved-list" id="favoritesList" style="margin-top: 16px;"></div>
-        </div>
-
-        <div class="card">
-            <label>Recent</label>
-            <div class="inline-actions">
-                <button class="btn btn-control btn-small" onclick="refreshSavedData()">Refresh</button>
-                <button class="btn btn-control btn-small" onclick="clearRecent()">Clear Recent</button>
-            </div>
-            <div class="saved-list" id="recentList" style="margin-top: 16px;"></div>
-        </div>
-
-        <div class="card">
-            <label>Volume Control</label>
-            <div class="volume-control">
-                <input type="range" id="volumeSlider" min="0" max="100" value="50" onchange="setVolume(this.value)">
-                <span class="volume-value" id="volumeValue">50%</span>
-            </div>
-            <div class="controls" style="margin-top: 16px;">
-                <button class="btn btn-control" onclick="mute()">Mute</button>
-                <button class="btn btn-control" onclick="unmute()">Unmute</button>
-            </div>
-        </div>
-
-        <div class="card">
+        <div class="card status-card">
             <label>Status</label>
             <div class="status" id="status">
                 <div class="status-item">
@@ -382,20 +425,67 @@
                 </div>
             </div>
         </div>
+
+        <div class="card controls-card">
+            <label>Playback Controls</label>
+            <div class="controls">
+                <button class="btn btn-control" onclick="pause()">Pause</button>
+                <button class="btn btn-control" onclick="resume()">Resume</button>
+                <button class="btn btn-control" onclick="toggle()">Toggle</button>
+                <button class="btn btn-control" onclick="stop()">Stop</button>
+                <button class="btn btn-control" onclick="skip()">Skip</button>
+                <button class="btn btn-control" onclick="quit()">Quit</button>
+            </div>
+            <div class="control-section">
+                <label>Volume</label>
+                <div class="volume-control">
+                    <input type="range" id="volumeSlider" min="0" max="100" value="50" onchange="setVolume(this.value)">
+                    <span class="volume-value" id="volumeValue">50%</span>
+                </div>
+                <div class="controls" style="margin-top: 16px;">
+                    <button class="btn btn-control" onclick="mute()">Mute</button>
+                    <button class="btn btn-control" onclick="unmute()">Unmute</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="card favorites-card">
+            <label>Favorites</label>
+            <div class="form-group">
+                <label>Favorite Name</label>
+                <input type="text" id="favoriteNameInput" placeholder="My playlist or station">
+            </div>
+            <div class="form-group">
+                <label>Favorite URL</label>
+                <input type="text" id="favoriteUrlInput" placeholder="https://www.youtube.com/watch?v=...">
+            </div>
+            <div class="inline-actions">
+                <button class="btn btn-control btn-small" onclick="useCurrentUrlForFavorite()">Use Current URL</button>
+                <button class="btn btn-control btn-small" onclick="addFavorite()">Add Favorite</button>
+                <button class="btn btn-control btn-small" onclick="clearFavorites()">Clear Favorites</button>
+            </div>
+            <div class="saved-list" id="favoritesList" style="margin-top: 16px;"></div>
+        </div>
+
+        <div class="card recent-card">
+            <label>Recent</label>
+            <div class="inline-actions">
+                <button class="btn btn-control btn-small" onclick="refreshSavedData()">Refresh</button>
+                <button class="btn btn-control btn-small" onclick="clearRecent()">Clear Recent</button>
+            </div>
+            <div class="saved-list" id="recentList" style="margin-top: 16px;"></div>
+        </div>
+
     </div>
 
     <script>
         const API_BASE = '';
+        let lastPlaybackErrorShown = '';
         
         function getHeaders() {
-            const headers = {
+            return {
                 'Content-Type': 'application/json'
             };
-            const apiKey = document.getElementById('apiKey').value;
-            if (apiKey) {
-                headers['x-api-key'] = apiKey;
-            }
-            return headers;
         }
         
         function showMessage(text, isError = false) {
@@ -405,6 +495,15 @@
             setTimeout(() => {
                 msg.className = 'message';
             }, 3000);
+        }
+
+        async function getErrorText(response) {
+            try {
+                const data = await response.json();
+                return data.detail || data.error || JSON.stringify(data);
+            } catch {
+                return await response.text();
+            }
         }
         
         function setLoading(elementId, loading) {
@@ -419,14 +518,14 @@
             }
         }
         
-        async function play() {
+        async function play(enqueue = false, actionId = 'play') {
             const url = document.getElementById('urlInput').value;
             if (!url) {
                 showMessage('Please enter a YouTube URL', true);
                 return;
             }
             
-            setLoading('play', true);
+            setLoading(actionId, true);
             
             try {
                 const response = await fetch(`${API_BASE}/play`, {
@@ -434,24 +533,23 @@
                     headers: getHeaders(),
                     body: JSON.stringify({
                         url: url,
-                        enqueue: document.getElementById('enqueueCheck').checked
+                        enqueue
                     })
                 });
                 
                 if (response.ok) {
-                    showMessage('Playing: ' + url);
+                    showMessage(enqueue ? 'Queued URL' : 'Playback request sent');
                     document.getElementById('urlInput').value = '';
                     updateStatus();
                     refreshSavedData();
                 } else {
-                    const error = await response.text();
-                    showMessage('Error: ' + error, true);
+                    showMessage('Error: ' + await getErrorText(response), true);
                 }
             } catch (err) {
                 showMessage('Error: ' + err.message, true);
             }
             
-            setLoading('play', false);
+            setLoading(actionId, false);
         }
         
         async function stop() {
@@ -463,6 +561,8 @@
                 if (response.ok) {
                     showMessage('Stopped');
                     updateStatus();
+                } else {
+                    showMessage('Error: ' + await getErrorText(response), true);
                 }
             } catch (err) {
                 showMessage('Error: ' + err.message, true);
@@ -478,6 +578,8 @@
                 if (response.ok) {
                     showMessage('Paused');
                     updateStatus();
+                } else {
+                    showMessage('Error: ' + await getErrorText(response), true);
                 }
             } catch (err) {
                 showMessage('Error: ' + err.message, true);
@@ -493,6 +595,8 @@
                 if (response.ok) {
                     showMessage('Resumed');
                     updateStatus();
+                } else {
+                    showMessage('Error: ' + await getErrorText(response), true);
                 }
             } catch (err) {
                 showMessage('Error: ' + err.message, true);
@@ -508,6 +612,8 @@
                 if (response.ok) {
                     showMessage('Toggled');
                     updateStatus();
+                } else {
+                    showMessage('Error: ' + await getErrorText(response), true);
                 }
             } catch (err) {
                 showMessage('Error: ' + err.message, true);
@@ -523,6 +629,8 @@
                 if (response.ok) {
                     showMessage('Skipped to next');
                     updateStatus();
+                } else {
+                    showMessage('Error: ' + await getErrorText(response), true);
                 }
             } catch (err) {
                 showMessage('Error: ' + err.message, true);
@@ -538,6 +646,8 @@
                 if (response.ok) {
                     showMessage('Quit MPV');
                     updateStatus();
+                } else {
+                    showMessage('Error: ' + await getErrorText(response), true);
                 }
             } catch (err) {
                 showMessage('Error: ' + err.message, true);
@@ -556,6 +666,8 @@
                 if (response.ok) {
                     showMessage('Volume set to ' + level + '%');
                     updateStatus();
+                } else {
+                    showMessage('Error: ' + await getErrorText(response), true);
                 }
             } catch (err) {
                 showMessage('Error: ' + err.message, true);
@@ -571,6 +683,8 @@
                 if (response.ok) {
                     showMessage('Muted');
                     updateStatus();
+                } else {
+                    showMessage('Error: ' + await getErrorText(response), true);
                 }
             } catch (err) {
                 showMessage('Error: ' + err.message, true);
@@ -586,6 +700,8 @@
                 if (response.ok) {
                     showMessage('Unmuted');
                     updateStatus();
+                } else {
+                    showMessage('Error: ' + await getErrorText(response), true);
                 }
             } catch (err) {
                 showMessage('Error: ' + err.message, true);
@@ -603,8 +719,15 @@
                     const props = data.props || {};
                     
                     document.getElementById('statusTitle').textContent = props['media-title'] || '-';
-                    document.getElementById('statusState').textContent = props.pause === true ? 'Paused' : 
-                                                                          props.pause === false ? 'Playing' : '-';
+                    document.getElementById('statusState').textContent = formatPlayerState(data.player_state);
+                    if (data.playback_error && data.playback_error !== lastPlaybackErrorShown) {
+                        lastPlaybackErrorShown = data.playback_error;
+                        showMessage('Playback error: ' + data.playback_error, true);
+                    } else if (data.errors && data.errors.length) {
+                        showMessage('Status error: ' + data.errors.join('; '), true);
+                    } else if (!data.playback_error) {
+                        lastPlaybackErrorShown = '';
+                    }
                     
                     const position = props['time-pos'];
                     const duration = props['duration'];
@@ -665,7 +788,7 @@
                     document.getElementById('favoriteUrlInput').value = '';
                     refreshSavedData();
                 } else {
-                    showMessage('Error: ' + await response.text(), true);
+                    showMessage('Error: ' + await getErrorText(response), true);
                 }
             } catch (err) {
                 showMessage('Error: ' + err.message, true);
@@ -698,7 +821,7 @@
                     showMessage('Favorite removed');
                     refreshSavedData();
                 } else {
-                    showMessage('Error: ' + await response.text(), true);
+                    showMessage('Error: ' + await getErrorText(response), true);
                 }
             } catch (err) {
                 showMessage('Error: ' + err.message, true);
@@ -707,8 +830,7 @@
 
         async function playSavedUrl(url, enqueue = false) {
             document.getElementById('urlInput').value = url;
-            document.getElementById('enqueueCheck').checked = enqueue;
-            await play();
+            await play(enqueue, enqueue ? 'queue' : 'play');
         }
 
         async function refreshSavedData() {
@@ -777,7 +899,9 @@
                 url.textContent = item.url;
 
                 meta.appendChild(name);
-                meta.appendChild(url);
+                if (canRemove) {
+                    meta.appendChild(url);
+                }
 
                 const actions = document.createElement('div');
                 actions.className = 'saved-actions';
@@ -818,10 +942,25 @@
                 if (response.ok) {
                     showMessage(successMessage);
                 } else {
-                    showMessage('Error: ' + await response.text(), true);
+                    showMessage('Error: ' + await getErrorText(response), true);
                 }
             } catch (err) {
                 showMessage('Error: ' + err.message, true);
+            }
+        }
+
+        function formatPlayerState(state) {
+            switch (state) {
+                case 'playing':
+                    return 'Playing';
+                case 'paused':
+                    return 'Paused';
+                case 'loading':
+                    return 'Loading';
+                case 'idle':
+                    return 'Idle';
+                default:
+                    return '-';
             }
         }
         
