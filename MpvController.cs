@@ -51,6 +51,7 @@ internal sealed class MpvController : IDisposable
     private bool _autoResumeInFlight;
     private bool _playbackStartedSinceLoad = true;
     private string? _lastPlaybackError;
+    private bool _forcedAudioDeviceFailure;
 
     public MpvController(Action<string> log)
     {
@@ -70,6 +71,17 @@ internal sealed class MpvController : IDisposable
     public string? CurrentSourceUrl => _lastRequestedUrl ?? _resumeSourceUrl;
 
     public string? LastPlaybackError => _lastPlaybackError;
+
+    public bool ConsumeForcedAudioDeviceFailure()
+    {
+        if (!_forcedAudioDeviceFailure)
+        {
+            return false;
+        }
+
+        _forcedAudioDeviceFailure = false;
+        return true;
+    }
 
     public void Stop(AppSettings settings, string audioDeviceId)
     {
@@ -451,6 +463,7 @@ internal sealed class MpvController : IDisposable
             _autoResumeInFlight = isAutoResume;
             _playbackStartedSinceLoad = false;
             _lastPlaybackError = null;
+            _forcedAudioDeviceFailure = false;
             if (!isAutoResume)
             {
                 _autoResumeAttempts = 0;
@@ -790,6 +803,7 @@ internal sealed class MpvController : IDisposable
             case "start-file":
                 _playbackStartedSinceLoad = false;
                 _lastPlaybackError = null;
+                _forcedAudioDeviceFailure = false;
                 _log($"mpv event: start-file ({DescribeCurrentTrack()})");
                 break;
             case "playback-restart":
@@ -874,7 +888,17 @@ internal sealed class MpvController : IDisposable
             return;
         }
 
-        _log($"mpv {level} [{prefix}]: {text.Trim()}");
+        var trimmedText = text.Trim();
+        if (string.Equals(level, "error", StringComparison.OrdinalIgnoreCase)
+            && (trimmedText.Contains("This audio driver/device was forced", StringComparison.OrdinalIgnoreCase)
+                || trimmedText.Contains("Could not open/initialize audio device", StringComparison.OrdinalIgnoreCase)
+                || trimmedText.Contains("Failed to initialize audio driver", StringComparison.OrdinalIgnoreCase)))
+        {
+            _forcedAudioDeviceFailure = true;
+            _lastPlaybackError = "Selected audio output could not be opened.";
+        }
+
+        _log($"mpv {level} [{prefix}]: {trimmedText}");
     }
 
     private void OnMpvProcessExited(object? sender, EventArgs eventArgs)

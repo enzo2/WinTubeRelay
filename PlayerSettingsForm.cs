@@ -110,6 +110,7 @@ internal sealed class PlayerSettingsForm : Form
         return new AppSettings
         {
             SelectedAudioDeviceId = currentSettings.SelectedAudioDeviceId,
+            SelectedAudioDeviceName = currentSettings.SelectedAudioDeviceName,
             MpvPath = _mpvPathTextBox.Text.Trim(),
             YtDlpPath = NullIfWhiteSpace(_ytDlpPathTextBox.Text),
             YtDlpBrowser = NullIfWhiteSpace(_browserTextBox.Text),

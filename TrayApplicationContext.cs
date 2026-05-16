@@ -29,6 +29,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private string? _lastPlaybackErrorShown;
     private bool _isMenuOpen;
     private bool _savedMenusDirty;
+    private bool _audioOutputsMenuDirty;
     private bool _statusUpdateInProgress;
     private const int MaxRecentHistory = 10;
 
@@ -79,6 +80,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
         contextMenu.Closed += (_, _) =>
         {
             _isMenuOpen = false;
+            if (_audioOutputsMenuDirty)
+            {
+                RebuildAudioOutputsMenu();
+                _audioOutputsMenuDirty = false;
+            }
+
             if (_savedMenusDirty)
             {
                 RefreshFavoritesMenu();
@@ -176,10 +183,18 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _audioOutputsMenuItem.DropDownItems.Clear();
 
         var devices = _audioDeviceService.GetOutputDevices();
+        var autoItem = new ToolStripMenuItem("System Default")
+        {
+            Checked = string.IsNullOrWhiteSpace(_settings.SelectedAudioDeviceId),
+        };
+        autoItem.Click += (_, _) => SelectAutomaticAudioOutput();
+        _audioOutputsMenuItem.DropDownItems.Add(autoItem);
+
         if (devices.Count == 0)
         {
             _currentAudioDeviceId = "auto";
-            _currentOutputItem.Text = "Current output: no active outputs found";
+            _currentOutputItem.Text = "Current output: system default";
+            _audioOutputsMenuItem.DropDownItems.Add(new ToolStripSeparator());
             _audioOutputsMenuItem.DropDownItems.Add(new ToolStripMenuItem("No active outputs found")
             {
                 Enabled = false,
@@ -187,14 +202,10 @@ internal sealed class TrayApplicationContext : ApplicationContext
             return;
         }
 
-        var selectedDevice = devices.FirstOrDefault(device => device.Id == _settings.SelectedAudioDeviceId);
-        if (selectedDevice is null)
-        {
-            selectedDevice = devices[0];
-            _settings.SelectedAudioDeviceId = selectedDevice.Id;
-            _settingsStore.Save(_settings);
-        }
+        var selectedDevice = ResolveSelectedAudioDevice(devices);
+        autoItem.Checked = selectedDevice is null;
 
+        _audioOutputsMenuItem.DropDownItems.Add(new ToolStripSeparator());
         foreach (var device in devices)
         {
             var menuItem = new ToolStripMenuItem(device.FriendlyName)
@@ -206,8 +217,16 @@ internal sealed class TrayApplicationContext : ApplicationContext
             _audioOutputsMenuItem.DropDownItems.Add(menuItem);
         }
 
-        UpdateCurrentOutput(selectedDevice);
-        _currentAudioDeviceId = selectedDevice.MpvAudioDeviceId;
+        if (selectedDevice is null)
+        {
+            _currentAudioDeviceId = "auto";
+            _currentOutputItem.Text = "Current output: system default";
+        }
+        else
+        {
+            UpdateCurrentOutput(selectedDevice);
+            _currentAudioDeviceId = selectedDevice.MpvAudioDeviceId;
+        }
     }
 
     private void RefreshFavoritesMenu()
@@ -283,6 +302,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
 
         _settings.SelectedAudioDeviceId = device.Id;
+        _settings.SelectedAudioDeviceName = device.FriendlyName;
         _currentAudioDeviceId = device.MpvAudioDeviceId;
         _settingsStore.Save(_settings);
         UpdateCurrentOutput(device);
@@ -299,6 +319,21 @@ internal sealed class TrayApplicationContext : ApplicationContext
         ShowInfo(appliedNow
             ? $"Audio output set to {device.FriendlyName}"
             : $"Saved {device.FriendlyName}. It will be used the next time playback starts.");
+        UpdateStatus();
+    }
+
+    private void SelectAutomaticAudioOutput()
+    {
+        _settings.SelectedAudioDeviceId = null;
+        _settings.SelectedAudioDeviceName = null;
+        _currentAudioDeviceId = "auto";
+        _settingsStore.Save(_settings);
+        RebuildAudioOutputsMenu();
+
+        var appliedNow = _mpvController.TryApplyAudioOutput(_settings, "auto");
+        ShowInfo(appliedNow
+            ? "Audio output set to system default."
+            : "Saved system default output. It will be used the next time playback starts.");
         UpdateStatus();
     }
 
@@ -717,6 +752,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private void SurfacePlaybackError()
     {
+        if (_mpvController.ConsumeForcedAudioDeviceFailure())
+        {
+            FallBackToAutomaticAudioOutput();
+            return;
+        }
+
         var playbackError = _mpvController.LastPlaybackError;
         if (string.IsNullOrWhiteSpace(playbackError))
         {
@@ -731,6 +772,16 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         _lastPlaybackErrorShown = playbackError;
         ShowError($"Playback error: {playbackError}");
+    }
+
+    private void FallBackToAutomaticAudioOutput()
+    {
+        _settings.SelectedAudioDeviceId = null;
+        _settings.SelectedAudioDeviceName = null;
+        _currentAudioDeviceId = "auto";
+        _settingsStore.Save(_settings);
+        RefreshAudioOutputsMenuSoon();
+        ShowError("Selected audio output failed. Falling back to system default.");
     }
 
     private void UpdateCurrentOutput(AudioOutputDevice device)
@@ -750,12 +801,100 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private string CurrentAudioDeviceId
     {
-        get => _currentAudioDeviceId;
+        get => ResolveCurrentAudioDeviceId();
+    }
+
+    private string ResolveCurrentAudioDeviceId()
+    {
+        if (string.IsNullOrWhiteSpace(_settings.SelectedAudioDeviceId)
+            && string.IsNullOrWhiteSpace(_settings.SelectedAudioDeviceName))
+        {
+            _currentAudioDeviceId = "auto";
+            return _currentAudioDeviceId;
+        }
+
+        IReadOnlyList<AudioOutputDevice> devices;
+        try
+        {
+            devices = _audioDeviceService.GetOutputDevices();
+        }
+        catch (Exception ex)
+        {
+            Log($"Could not refresh audio outputs; falling back to auto output: {ex.Message}");
+            _currentAudioDeviceId = "auto";
+            return _currentAudioDeviceId;
+        }
+
+        var selectedDevice = ResolveSelectedAudioDevice(devices);
+        if (selectedDevice is not null)
+        {
+            _currentAudioDeviceId = selectedDevice.MpvAudioDeviceId;
+            return _currentAudioDeviceId;
+        }
+
+        var staleDeviceId = _settings.SelectedAudioDeviceId ?? "(none)";
+        var staleDeviceName = _settings.SelectedAudioDeviceName ?? "(none)";
+        _settings.SelectedAudioDeviceId = null;
+        _settings.SelectedAudioDeviceName = null;
+        _currentAudioDeviceId = "auto";
+        _settingsStore.Save(_settings);
+        Log($"Saved audio output is no longer active (id={staleDeviceId}, name={staleDeviceName}); falling back to auto output.");
+        RefreshAudioOutputsMenuSoon();
+        return _currentAudioDeviceId;
+    }
+
+    private AudioOutputDevice? ResolveSelectedAudioDevice(IReadOnlyList<AudioOutputDevice> devices)
+    {
+        var selectedDevice = !string.IsNullOrWhiteSpace(_settings.SelectedAudioDeviceId)
+            ? devices.FirstOrDefault(device => device.Id == _settings.SelectedAudioDeviceId)
+            : null;
+        if (selectedDevice is not null)
+        {
+            SaveSelectedAudioDevice(selectedDevice);
+            return selectedDevice;
+        }
+
+        selectedDevice = !string.IsNullOrWhiteSpace(_settings.SelectedAudioDeviceName)
+            ? devices.FirstOrDefault(device => string.Equals(device.FriendlyName, _settings.SelectedAudioDeviceName, StringComparison.CurrentCultureIgnoreCase))
+            : null;
+        if (selectedDevice is not null)
+        {
+            Log($"Saved audio output ID changed; matched by name '{selectedDevice.FriendlyName}'.");
+            SaveSelectedAudioDevice(selectedDevice);
+            return selectedDevice;
+        }
+
+        return null;
+    }
+
+    private void SaveSelectedAudioDevice(AudioOutputDevice device)
+    {
+        if (string.Equals(_settings.SelectedAudioDeviceId, device.Id, StringComparison.Ordinal)
+            && string.Equals(_settings.SelectedAudioDeviceName, device.FriendlyName, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _settings.SelectedAudioDeviceId = device.Id;
+        _settings.SelectedAudioDeviceName = device.FriendlyName;
+        _settingsStore.Save(_settings);
+    }
+
+    private void RefreshAudioOutputsMenuSoon()
+    {
+        if (_isMenuOpen)
+        {
+            _audioOutputsMenuDirty = true;
+            return;
+        }
+
+        _uiContext.Post(_ => RebuildAudioOutputsMenu(), null);
     }
 
     private static void CopySettings(AppSettings source, AppSettings destination)
     {
         destination.SelectedAudioDeviceId = source.SelectedAudioDeviceId;
+        destination.SelectedAudioDeviceName = source.SelectedAudioDeviceName;
         destination.MpvPath = source.MpvPath;
         destination.YtDlpPath = source.YtDlpPath;
         destination.YtDlpBrowser = source.YtDlpBrowser;

@@ -4,6 +4,8 @@ internal sealed class AppSettings
 {
     public string? SelectedAudioDeviceId { get; set; }
 
+    public string? SelectedAudioDeviceName { get; set; }
+
     public string MpvPath { get; set; } = string.Empty;
 
     public string? YtDlpPath { get; set; }
