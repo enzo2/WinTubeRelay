@@ -8,11 +8,11 @@ namespace WinTubeRelay.Tray;
 
 internal sealed class WebServerService : IAsyncDisposable
 {
+    private const int MaxRecentHistory = 10;
     private readonly Func<AppSettings> _getSettings;
     private readonly Func<string> _getCurrentAudioDeviceId;
     private readonly MpvController _mpvController;
     private readonly Action _saveSettings;
-    private readonly Action<string> _recordSuccessfulPlay;
     private readonly Action<string> _log;
     private WebApplication? _app;
 
@@ -21,14 +21,12 @@ internal sealed class WebServerService : IAsyncDisposable
         Func<string> getCurrentAudioDeviceId,
         MpvController mpvController,
         Action saveSettings,
-        Action<string> recordSuccessfulPlay,
         Action<string> log)
     {
         _getSettings = getSettings;
         _getCurrentAudioDeviceId = getCurrentAudioDeviceId;
         _mpvController = mpvController;
         _saveSettings = saveSettings;
-        _recordSuccessfulPlay = recordSuccessfulPlay;
         _log = log;
     }
 
@@ -110,7 +108,6 @@ internal sealed class WebServerService : IAsyncDisposable
             try
             {
                 _mpvController.Play(settings, request.Url, request.Enqueue, _getCurrentAudioDeviceId());
-                _recordSuccessfulPlay(request.Url);
                 return Results.Json(new { ok = true, url = request.Url, enqueue = request.Enqueue, mpv = (object?)null });
             }
             catch (Exception ex)
@@ -172,6 +169,7 @@ internal sealed class WebServerService : IAsyncDisposable
                 player_state = snapshot.PlayerState,
                 props = snapshot.Properties,
                 errors = snapshot.Errors.Count == 0 ? null : snapshot.Errors,
+                playback_error = _mpvController.LastPlaybackError,
             });
         }));
 
@@ -268,6 +266,7 @@ internal sealed class WebServerService : IAsyncDisposable
                 ok = true,
                 items = settings.RecentUrls
                     .OrderByDescending(item => item.LastPlayedAtUtc)
+                    .Take(MaxRecentHistory)
                     .Select(item => new
                     {
                         name = item.Name,

@@ -20,7 +20,7 @@ internal sealed class AppSettings
 
     public int VolumeStep { get; set; } = 10;
 
-    public int MaxRecentUrls { get; set; } = 8;
+    public int MaxRecentUrls { get; set; } = 10;
 
     public List<SavedUrlEntry> Favorites { get; set; } = [];
 

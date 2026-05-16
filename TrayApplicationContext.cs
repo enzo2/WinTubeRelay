@@ -23,11 +23,19 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly ToolStripMenuItem _startupMenuItem;
     private readonly ToolStripMenuItem _settingsPathItem;
     private readonly System.Windows.Forms.Timer _statusTimer;
+    private readonly SynchronizationContext _uiContext;
     private PlayerStatus? _lastObservedStatus;
+    private string _currentAudioDeviceId = "auto";
+    private string? _lastPlaybackErrorShown;
+    private bool _isMenuOpen;
+    private bool _savedMenusDirty;
+    private bool _statusUpdateInProgress;
+    private const int MaxRecentHistory = 10;
 
     public TrayApplicationContext()
     {
         _settingsStore = new SettingsStore();
+        _uiContext = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
         _audioDeviceService = new AudioDeviceService();
         _startupRegistrationService = new StartupRegistrationService();
         _mpvController = new MpvController(Log);
@@ -38,7 +46,6 @@ internal sealed class TrayApplicationContext : ApplicationContext
             () => CurrentAudioDeviceId,
             _mpvController,
             SaveSettings,
-            RecordSuccessfulPlay,
             Log);
         _brandIcon = Branding.CreateTrayIcon();
 
@@ -68,11 +75,16 @@ internal sealed class TrayApplicationContext : ApplicationContext
         };
 
         var contextMenu = new ContextMenuStrip();
-        contextMenu.Opening += (_, _) =>
+        contextMenu.Opened += (_, _) => _isMenuOpen = true;
+        contextMenu.Closed += (_, _) =>
         {
-            RefreshStartupMenu();
-            RefreshFavoritesMenu();
-            RefreshRecentMenu();
+            _isMenuOpen = false;
+            if (_savedMenusDirty)
+            {
+                RefreshFavoritesMenu();
+                RefreshRecentMenu();
+                _savedMenusDirty = false;
+            }
         };
         contextMenu.Items.Add(new ToolStripMenuItem(Branding.BuildHeaderText()) { Enabled = false });
         contextMenu.Items.Add(_statusItem);
@@ -166,6 +178,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         var devices = _audioDeviceService.GetOutputDevices();
         if (devices.Count == 0)
         {
+            _currentAudioDeviceId = "auto";
             _currentOutputItem.Text = "Current output: no active outputs found";
             _audioOutputsMenuItem.DropDownItems.Add(new ToolStripMenuItem("No active outputs found")
             {
@@ -194,6 +207,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
 
         UpdateCurrentOutput(selectedDevice);
+        _currentAudioDeviceId = selectedDevice.MpvAudioDeviceId;
     }
 
     private void RefreshFavoritesMenu()
@@ -240,7 +254,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
             return;
         }
 
-        foreach (var recent in _settings.RecentUrls.OrderByDescending(item => item.LastPlayedAtUtc))
+        foreach (var recent in _settings.RecentUrls
+            .OrderByDescending(item => item.LastPlayedAtUtc)
+            .Take(MaxRecentHistory))
         {
             var recentItem = new ToolStripMenuItem(Shorten(recent.Name))
             {
@@ -267,6 +283,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
 
         _settings.SelectedAudioDeviceId = device.Id;
+        _currentAudioDeviceId = device.MpvAudioDeviceId;
         _settingsStore.Save(_settings);
         UpdateCurrentOutput(device);
 
@@ -320,9 +337,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
 
         RunPlayerAction(
-            enqueue ? "Queued URL." : "Playing URL.",
-            controller => controller.Play(_settings, url, enqueue, CurrentAudioDeviceId),
-            () => RecordSuccessfulPlay(url));
+            enqueue ? "Queued URL." : "Playback request sent.",
+            controller => controller.Play(_settings, url, enqueue, CurrentAudioDeviceId));
     }
 
     private void AddFavoriteFromPrompt()
@@ -484,7 +500,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         _settings.Favorites.Clear();
         _settingsStore.Save(_settings);
-        RefreshFavoritesMenu();
+        RefreshSavedMenus();
         ShowInfo("Favorites cleared.");
     }
 
@@ -492,7 +508,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         _settings.RecentUrls.Clear();
         _settingsStore.Save(_settings);
-        RefreshRecentMenu();
+        RefreshSavedMenus();
         ShowInfo("Recent history cleared.");
     }
 
@@ -515,12 +531,41 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
 
         _settingsStore.Save(_settings);
-        RefreshFavoritesMenu();
+        RefreshSavedMenus();
     }
 
-    private void RecordSuccessfulPlay(string url)
+    private void RecordNowPlayingRecent(PlayerStatus status)
+    {
+        if (status.State != PlayerState.Playing || string.IsNullOrWhiteSpace(status.MediaTitle))
+        {
+            return;
+        }
+
+        var url = status.Path;
+        if (string.IsNullOrWhiteSpace(url) || !UrlValidator.IsValidYoutubeUrl(url))
+        {
+            url = _mpvController.CurrentSourceUrl;
+        }
+
+        if (string.IsNullOrWhiteSpace(url) || !UrlValidator.IsValidYoutubeUrl(url))
+        {
+            return;
+        }
+
+        RecordSuccessfulPlay(url, status.MediaTitle);
+    }
+
+    private void RecordSuccessfulPlay(string url, string? name = null)
     {
         var existingRecent = _settings.RecentUrls.FirstOrDefault(item => string.Equals(item.Url, url, StringComparison.OrdinalIgnoreCase));
+        var resolvedName = !string.IsNullOrWhiteSpace(name) ? name.Trim() : existingRecent?.Name ?? BuildFriendlyName(url);
+        if (existingRecent is not null
+            && ReferenceEquals(existingRecent, _settings.RecentUrls.FirstOrDefault())
+            && string.Equals(existingRecent.Name, resolvedName, StringComparison.Ordinal))
+        {
+            return;
+        }
+
         if (existingRecent is not null)
         {
             _settings.RecentUrls.Remove(existingRecent);
@@ -528,14 +573,14 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         _settings.RecentUrls.Insert(0, new SavedUrlEntry
         {
-            Name = existingRecent?.Name ?? BuildFriendlyName(url),
+            Name = resolvedName,
             Url = url,
             LastPlayedAtUtc = DateTime.UtcNow,
         });
 
-        if (_settings.RecentUrls.Count > _settings.MaxRecentUrls)
+        if (_settings.RecentUrls.Count > MaxRecentHistory)
         {
-            _settings.RecentUrls = _settings.RecentUrls.Take(_settings.MaxRecentUrls).ToList();
+            _settings.RecentUrls = _settings.RecentUrls.Take(MaxRecentHistory).ToList();
         }
 
         var favorite = _settings.Favorites.FirstOrDefault(item => string.Equals(item.Url, url, StringComparison.OrdinalIgnoreCase));
@@ -545,8 +590,20 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
 
         _settingsStore.Save(_settings);
-        RefreshRecentMenu();
+        RefreshSavedMenus();
+    }
+
+    private void RefreshSavedMenus()
+    {
+        if (_isMenuOpen)
+        {
+            _savedMenusDirty = true;
+            return;
+        }
+
         RefreshFavoritesMenu();
+        RefreshRecentMenu();
+        _savedMenusDirty = false;
     }
 
     private void SaveSettings()
@@ -573,15 +630,58 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private void UpdateStatus()
     {
+        if (_statusUpdateInProgress)
+        {
+            return;
+        }
+
+        _statusUpdateInProgress = true;
         var previousStatus = _lastObservedStatus;
-        var status = _mpvController.TryGetStatus(_settings, CurrentAudioDeviceId);
-        _mpvController.RecordPlaybackSnapshot(status);
+        var audioDeviceId = CurrentAudioDeviceId;
+
+        Task.Run(() =>
+        {
+            var status = _mpvController.TryGetStatus(_settings, audioDeviceId);
+            _mpvController.RecordPlaybackSnapshot(status);
+            var resumed = status is not null
+                && _mpvController.TryFailsafeResume(_settings, audioDeviceId, previousStatus, status);
+            return (status, resumed);
+        }).ContinueWith(task =>
+        {
+            _uiContext.Post(_ =>
+            {
+                try
+                {
+                    if (task.IsFaulted)
+                    {
+                        Log(task.Exception?.GetBaseException().ToString() ?? "Status update failed.");
+                        ApplyStatus(null, resumed: false);
+                    }
+                    else
+                    {
+                        ApplyStatus(task.Result.status, task.Result.resumed);
+                    }
+                }
+                finally
+                {
+                    _statusUpdateInProgress = false;
+                }
+            }, null);
+        });
+    }
+
+    private void ApplyStatus(PlayerStatus? status, bool resumed)
+    {
         if (status is null)
         {
             _displaySleepBlocker.SetPlaybackActive(false);
-            _statusItem.Text = "Status: unavailable";
-            _positionItem.Text = "Position: -";
-            _notifyIcon.Text = BuildTrayText("status unavailable");
+            if (!_isMenuOpen)
+            {
+                _statusItem.Text = "Status: unavailable";
+                _positionItem.Text = "Position: -";
+                _notifyIcon.Text = BuildTrayText("status unavailable");
+            }
+
             _lastObservedStatus = null;
             return;
         }
@@ -590,6 +690,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             PlayerState.Playing => "playing",
             PlayerState.Paused => "paused",
+            PlayerState.Loading => "loading",
             PlayerState.Idle => "idle",
             _ => "unknown",
         };
@@ -597,15 +698,39 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _displaySleepBlocker.SetPlaybackActive(status.State == PlayerState.Playing);
 
         var title = string.IsNullOrWhiteSpace(status.MediaTitle) ? "(idle)" : status.MediaTitle;
-        _statusItem.Text = $"Status: {stateText} - {Shorten(title, 48)}";
-        _positionItem.Text = BuildPositionText(status);
-        _notifyIcon.Text = BuildTrayText(title);
-        if (_mpvController.TryFailsafeResume(_settings, CurrentAudioDeviceId, previousStatus, status))
+        if (!_isMenuOpen)
+        {
+            _statusItem.Text = $"Status: {stateText} - {Shorten(title, 48)}";
+            _positionItem.Text = BuildPositionText(status);
+            _notifyIcon.Text = BuildTrayText(title);
+        }
+
+        RecordNowPlayingRecent(status);
+        SurfacePlaybackError();
+        if (resumed)
         {
             ShowInfo("Playback dropped unexpectedly. Resuming...");
         }
 
         _lastObservedStatus = status;
+    }
+
+    private void SurfacePlaybackError()
+    {
+        var playbackError = _mpvController.LastPlaybackError;
+        if (string.IsNullOrWhiteSpace(playbackError))
+        {
+            _lastPlaybackErrorShown = null;
+            return;
+        }
+
+        if (string.Equals(playbackError, _lastPlaybackErrorShown, StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _lastPlaybackErrorShown = playbackError;
+        ShowError($"Playback error: {playbackError}");
     }
 
     private void UpdateCurrentOutput(AudioOutputDevice device)
@@ -625,19 +750,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private string CurrentAudioDeviceId
     {
-        get
-        {
-            var device = _audioDeviceService
-                .GetOutputDevices()
-                .FirstOrDefault(item => item.Id == _settings.SelectedAudioDeviceId);
-
-            if (device is not null)
-            {
-                return device.MpvAudioDeviceId;
-            }
-
-            return "auto";
-        }
+        get => _currentAudioDeviceId;
     }
 
     private static void CopySettings(AppSettings source, AppSettings destination)

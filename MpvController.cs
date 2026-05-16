@@ -9,6 +9,7 @@ internal enum PlayerState
 {
     Unknown,
     Idle,
+    Loading,
     Playing,
     Paused,
 }
@@ -39,6 +40,7 @@ internal sealed class MpvController : IDisposable
     private Task? _eventMonitorTask;
     private string? _lastKnownMediaTitle;
     private string? _lastKnownPath;
+    private string? _lastRequestedUrl;
     private bool _expectedProcessExit;
     private string? _resumeSourceUrl;
     private double? _lastStablePositionSeconds;
@@ -47,6 +49,8 @@ internal sealed class MpvController : IDisposable
     private DateTime _lastAutoResumeAttemptUtc;
     private int _autoResumeAttempts;
     private bool _autoResumeInFlight;
+    private bool _playbackStartedSinceLoad = true;
+    private string? _lastPlaybackError;
 
     public MpvController(Action<string> log)
     {
@@ -62,6 +66,10 @@ internal sealed class MpvController : IDisposable
 
         LoadUrl(settings, url, enqueue, audioDeviceId, isAutoResume: false);
     }
+
+    public string? CurrentSourceUrl => _lastRequestedUrl ?? _resumeSourceUrl;
+
+    public string? LastPlaybackError => _lastPlaybackError;
 
     public void Stop(AppSettings settings, string audioDeviceId)
     {
@@ -295,13 +303,19 @@ internal sealed class MpvController : IDisposable
         AddProperty("mute", () => GetProperty<bool?>(settings, "mute", ensureStarted: false));
 
         var playerState = "unknown";
-        if (!string.IsNullOrWhiteSpace(path))
-        {
-            playerState = pause == true ? "paused" : "playing";
-        }
-        else if (coreIdle == true)
+        if (coreIdle == true)
         {
             playerState = "idle";
+        }
+        else if (!string.IsNullOrWhiteSpace(path))
+        {
+            playerState = pause == true
+                ? "paused"
+                : _playbackStartedSinceLoad ? "playing" : "loading";
+        }
+        else if (!_playbackStartedSinceLoad)
+        {
+            playerState = "loading";
         }
 
         return new ApiStatusSnapshot(props, errors, playerState);
@@ -353,13 +367,19 @@ internal sealed class MpvController : IDisposable
             var mute = GetProperty<bool?>(settings, "mute", ensureStarted: false);
 
             var state = PlayerState.Unknown;
-            if (!string.IsNullOrWhiteSpace(path))
-            {
-                state = pause == true ? PlayerState.Paused : PlayerState.Playing;
-            }
-            else if (coreIdle == true)
+            if (coreIdle == true)
             {
                 state = PlayerState.Idle;
+            }
+            else if (!string.IsNullOrWhiteSpace(path))
+            {
+                state = pause == true
+                    ? PlayerState.Paused
+                    : _playbackStartedSinceLoad ? PlayerState.Playing : PlayerState.Loading;
+            }
+            else if (!_playbackStartedSinceLoad)
+            {
+                state = PlayerState.Loading;
             }
 
             return new PlayerStatus(
@@ -420,10 +440,17 @@ internal sealed class MpvController : IDisposable
     {
         if (!enqueue)
         {
+            if (!isAutoResume)
+            {
+                _lastRequestedUrl = url;
+            }
+
             _resumeSourceUrl = url;
             _lastStablePositionSeconds = isAutoResume ? _lastStablePositionSeconds : 0;
             _lastStableDurationSeconds = isAutoResume ? _lastStableDurationSeconds : null;
             _autoResumeInFlight = isAutoResume;
+            _playbackStartedSinceLoad = false;
+            _lastPlaybackError = null;
             if (!isAutoResume)
             {
                 _autoResumeAttempts = 0;
@@ -761,9 +788,13 @@ internal sealed class MpvController : IDisposable
         switch (eventName)
         {
             case "start-file":
+                _playbackStartedSinceLoad = false;
+                _lastPlaybackError = null;
                 _log($"mpv event: start-file ({DescribeCurrentTrack()})");
                 break;
             case "playback-restart":
+                _playbackStartedSinceLoad = true;
+                _lastPlaybackError = null;
                 _log($"mpv event: playback-restart ({DescribeCurrentTrack()})");
                 break;
             case "end-file":
@@ -818,6 +849,11 @@ internal sealed class MpvController : IDisposable
         if (!string.IsNullOrWhiteSpace(error))
         {
             details.Add($"error={error}");
+            _lastPlaybackError = error;
+        }
+        else if (string.Equals(reason, "error", StringComparison.OrdinalIgnoreCase))
+        {
+            _lastPlaybackError = "mpv reported a playback error.";
         }
 
         if (playlistEntryId is not null)
