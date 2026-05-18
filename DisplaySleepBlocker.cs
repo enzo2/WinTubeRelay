@@ -9,6 +9,8 @@ internal sealed class DisplaySleepBlocker
     private const uint EsDisplayRequired = 0x00000002;
 
     private readonly Action<string> _log;
+    private readonly object _syncRoot = new();
+    private bool _playbackActive;
     private bool _isActive;
 
     public DisplaySleepBlocker(Action<string> log)
@@ -18,26 +20,45 @@ internal sealed class DisplaySleepBlocker
 
     public void SetPlaybackActive(bool isPlaying)
     {
-        if (isPlaying == _isActive)
+        lock (_syncRoot)
+        {
+            _playbackActive = isPlaying;
+            Apply();
+        }
+    }
+
+    public void Release()
+    {
+        lock (_syncRoot)
+        {
+            _playbackActive = false;
+            Apply();
+        }
+    }
+
+    private void Apply()
+    {
+        var shouldBlock = _playbackActive;
+        if (shouldBlock == _isActive)
         {
             return;
         }
 
-        var flags = isPlaying
+        var flags = shouldBlock
             ? EsContinuous | EsSystemRequired | EsDisplayRequired
             : EsContinuous;
 
         var result = SetThreadExecutionState(flags);
         if (result == 0)
         {
-            _log($"SetThreadExecutionState failed while {(isPlaying ? "acquiring" : "releasing")} playback wake lock.");
+            _log($"SetThreadExecutionState failed while {(shouldBlock ? "acquiring" : "releasing")} wake lock.");
             return;
         }
 
-        _isActive = isPlaying;
-        _log(isPlaying
-            ? "Playback wake lock enabled. Preventing display sleep while playing."
-            : "Playback wake lock released.");
+        _isActive = shouldBlock;
+        _log(shouldBlock
+            ? "Wake lock enabled. Preventing display sleep while playback is active."
+            : "Wake lock released.");
     }
 
     [DllImport("kernel32.dll")]

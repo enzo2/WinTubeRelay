@@ -178,6 +178,18 @@
             font-size: 14px;
             line-height: 1.8;
         }
+
+        .section-heading {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 8px;
+        }
+
+        .section-heading label {
+            margin-bottom: 0;
+        }
         
         .status-item {
             display: flex;
@@ -228,6 +240,27 @@
         .saved-actions {
             display: flex;
             gap: 8px;
+        }
+
+        .icon-btn {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 42px;
+            min-width: 42px;
+            height: 42px;
+            padding: 0;
+            border-radius: 8px;
+            font-size: 22px;
+            line-height: 1;
+            text-transform: none;
+            letter-spacing: 0;
+        }
+
+        .icon-btn.is-active {
+            color: #facc15;
+            border-color: rgba(250, 204, 21, 0.46);
+            background: rgba(250, 204, 21, 0.16);
         }
 
         .btn-small {
@@ -299,9 +332,9 @@
                 width: 100%;
             }
 
-            .saved-actions {
+            .saved-actions.has-favorite-action {
                 display: grid;
-                grid-template-columns: repeat(auto-fit, minmax(min(100%, 7rem), 1fr));
+                grid-template-columns: 42px repeat(2, minmax(0, 1fr));
                 width: 100%;
             }
 
@@ -401,7 +434,10 @@
         </div>
 
         <div class="card status-card">
-            <label>Status</label>
+            <div class="section-heading">
+                <label>Status</label>
+                <button class="btn btn-control icon-btn" id="statusFavoriteButton" onclick="toggleCurrentFavorite()" title="Add current item to favorites" aria-label="Add current item to favorites" style="display: none;" disabled>☆</button>
+            </div>
             <div class="status" id="status">
                 <div class="status-item">
                     <span class="status-label">Title:</span>
@@ -450,18 +486,8 @@
         </div>
 
         <div class="card favorites-card">
-            <label>Favorites</label>
-            <div class="form-group">
-                <label>Favorite Name</label>
-                <input type="text" id="favoriteNameInput" placeholder="My playlist or station">
-            </div>
-            <div class="form-group">
-                <label>Favorite URL</label>
-                <input type="text" id="favoriteUrlInput" placeholder="https://www.youtube.com/watch?v=...">
-            </div>
-            <div class="inline-actions">
-                <button class="btn btn-control btn-small" onclick="useCurrentUrlForFavorite()">Use Current URL</button>
-                <button class="btn btn-control btn-small" onclick="addFavorite()">Add Favorite</button>
+            <div class="section-heading">
+                <label>Favorites</label>
                 <button class="btn btn-control btn-small" onclick="clearFavorites()">Clear Favorites</button>
             </div>
             <div class="saved-list" id="favoritesList" style="margin-top: 16px;"></div>
@@ -481,6 +507,10 @@
     <script>
         const API_BASE = '';
         let lastPlaybackErrorShown = '';
+        let currentStatusUrl = '';
+        let currentStatusTitle = '';
+        let currentPlayerState = 'idle';
+        let favoritesByUrl = new Set();
         
         function getHeaders() {
             return {
@@ -717,9 +747,13 @@
                 if (response.ok) {
                     const data = await response.json();
                     const props = data.props || {};
+                    currentStatusUrl = typeof props.path === 'string' ? props.path : '';
+                    currentStatusTitle = typeof props['media-title'] === 'string' ? props['media-title'] : '';
+                    currentPlayerState = data.player_state || 'unknown';
                     
-                    document.getElementById('statusTitle').textContent = props['media-title'] || '-';
-                    document.getElementById('statusState').textContent = formatPlayerState(data.player_state);
+                    document.getElementById('statusTitle').textContent = currentStatusTitle || '-';
+                    document.getElementById('statusState').textContent = formatPlayerState(currentPlayerState);
+                    updateStatusFavoriteButton();
                     if (data.playback_error && data.playback_error !== lastPlaybackErrorShown) {
                         lastPlaybackErrorShown = data.playback_error;
                         showMessage('Playback error: ' + data.playback_error, true);
@@ -766,12 +800,9 @@
             }
         }
 
-        async function addFavorite() {
-            const url = document.getElementById('favoriteUrlInput').value.trim();
-            const name = document.getElementById('favoriteNameInput').value.trim();
-
+        async function addFavorite(url, name) {
             if (!url) {
-                showMessage('Please enter a YouTube URL for the favorite', true);
+                showMessage('No playable URL is available to favorite', true);
                 return;
             }
 
@@ -784,8 +815,6 @@
 
                 if (response.ok) {
                     showMessage('Favorite saved');
-                    document.getElementById('favoriteNameInput').value = '';
-                    document.getElementById('favoriteUrlInput').value = '';
                     refreshSavedData();
                 } else {
                     showMessage('Error: ' + await getErrorText(response), true);
@@ -795,8 +824,21 @@
             }
         }
 
-        function useCurrentUrlForFavorite() {
-            document.getElementById('favoriteUrlInput').value = document.getElementById('urlInput').value.trim();
+        async function toggleFavorite(url, name) {
+            if (!url) {
+                showMessage('No playable URL is available to favorite', true);
+                return;
+            }
+
+            if (favoritesByUrl.has(normalizeUrl(url))) {
+                await removeFavorite(url, 'Favorite removed');
+            } else {
+                await addFavorite(url, name);
+            }
+        }
+
+        async function toggleCurrentFavorite() {
+            await toggleFavorite(currentStatusUrl, currentStatusTitle);
         }
 
         async function clearFavorites() {
@@ -809,7 +851,7 @@
             refreshSavedData();
         }
 
-        async function removeFavorite(url) {
+        async function removeFavorite(url, message = 'Favorite removed') {
             try {
                 const response = await fetch(`${API_BASE}/favorites/remove`, {
                     method: 'POST',
@@ -818,7 +860,7 @@
                 });
 
                 if (response.ok) {
-                    showMessage('Favorite removed');
+                    showMessage(message);
                     refreshSavedData();
                 } else {
                     showMessage('Error: ' + await getErrorText(response), true);
@@ -834,7 +876,8 @@
         }
 
         async function refreshSavedData() {
-            await Promise.all([refreshFavorites(), refreshRecent()]);
+            await refreshFavorites();
+            await refreshRecent();
         }
 
         async function refreshFavorites() {
@@ -848,7 +891,9 @@
                 }
 
                 const data = await response.json();
+                favoritesByUrl = new Set((data.items || []).map(item => normalizeUrl(item.url)));
                 renderSavedList('favoritesList', data.items || [], true);
+                updateStatusFavoriteButton();
             } catch (err) {
                 console.error('Failed to refresh favorites:', err);
             }
@@ -884,6 +929,7 @@
             }
 
             items.forEach(item => {
+                const itemIsFavorite = favoritesByUrl.has(normalizeUrl(item.url));
                 const row = document.createElement('div');
                 row.className = 'saved-row';
 
@@ -905,6 +951,17 @@
 
                 const actions = document.createElement('div');
                 actions.className = 'saved-actions';
+
+                if (!canRemove) {
+                    actions.classList.add('has-favorite-action');
+                    const favoriteButton = document.createElement('button');
+                    favoriteButton.className = 'btn btn-control icon-btn' + (itemIsFavorite ? ' is-active' : '');
+                    favoriteButton.textContent = itemIsFavorite ? '★' : '☆';
+                    favoriteButton.title = itemIsFavorite ? 'Remove from favorites' : 'Add to favorites';
+                    favoriteButton.setAttribute('aria-label', favoriteButton.title);
+                    favoriteButton.onclick = () => toggleFavorite(item.url, item.name);
+                    actions.appendChild(favoriteButton);
+                }
 
                 const playButton = document.createElement('button');
                 playButton.className = 'btn btn-control btn-small';
@@ -930,6 +987,27 @@
                 row.appendChild(actions);
                 container.appendChild(row);
             });
+        }
+
+        function updateStatusFavoriteButton() {
+            const button = document.getElementById('statusFavoriteButton');
+            if (!button) {
+                return;
+            }
+
+            const isPlayable = !!currentStatusUrl && currentPlayerState === 'playing';
+            const isFavorite = favoritesByUrl.has(normalizeUrl(currentStatusUrl));
+
+            button.style.display = isPlayable ? 'inline-flex' : 'none';
+            button.disabled = !isPlayable;
+            button.classList.toggle('is-active', isPlayable && isFavorite);
+            button.textContent = isFavorite ? '★' : '☆';
+            button.title = isFavorite ? 'Remove current item from favorites' : 'Add current item to favorites';
+            button.setAttribute('aria-label', button.title);
+        }
+
+        function normalizeUrl(url) {
+            return (url || '').trim().toLowerCase();
         }
 
         async function postNoBody(path, successMessage) {
