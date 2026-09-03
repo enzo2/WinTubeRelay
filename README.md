@@ -17,6 +17,7 @@ This version is a tray-resident WinForms app that:
 - enumerates active Windows audio output devices
 - lets you pick the preferred output from the tray menu
 - persists the selected output and player settings across restarts in `%AppData%\WinTubeRelay\settings.json`
+- wakes a selected display-backed output and automatically refreshes/reconnects it after display sleep, endpoint changes, or Windows resume
 - launches and controls `mpv` directly over JSON IPC
 - plays YouTube and YouTube Music URLs
 - supports queueing, pause/resume/toggle, stop, skip, mute/unmute, and volume changes

@@ -137,13 +137,24 @@ internal sealed class MpvController : IDisposable
         SetProperty(settings, audioDeviceId, "mute", false);
     }
 
-    public bool TryApplyAudioOutput(AppSettings settings, string audioDeviceId)
+    public bool TryApplyAudioOutput(AppSettings settings, string audioDeviceId, bool forceReinitialize = false)
     {
         try
         {
             if (!TryConnect(settings))
             {
                 return false;
+            }
+
+            if (forceReinitialize && !string.Equals(audioDeviceId, "auto", StringComparison.OrdinalIgnoreCase))
+            {
+                // mpv can retain a failed WASAPI endpoint after a monitor wakes. Switching
+                // through auto makes it build a fresh audio chain before restoring the
+                // user's saved endpoint.
+                SendIpcRequest(
+                    settings,
+                    new object[] { "set_property", "audio-device", "auto" },
+                    ensureStarted: false);
             }
 
             SendIpcRequest(

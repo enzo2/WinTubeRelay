@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Drawing;
+using Microsoft.Win32;
 
 namespace WinTubeRelay.Tray;
 
@@ -23,6 +24,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly ToolStripMenuItem _startupMenuItem;
     private readonly ToolStripMenuItem _settingsPathItem;
     private readonly System.Windows.Forms.Timer _statusTimer;
+    private readonly System.Windows.Forms.Timer _outputRecoveryTimer;
     private readonly SynchronizationContext _uiContext;
     private PlayerStatus? _lastObservedStatus;
     private string _currentAudioDeviceId = "auto";
@@ -31,7 +33,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private bool _savedMenusDirty;
     private bool _audioOutputsMenuDirty;
     private bool _statusUpdateInProgress;
+    private bool _isExiting;
+    private int _selectedOutputUnavailable;
+    private int _outputRecoveryAttemptsRemaining;
+    private int _outputRecoveryQueued;
     private const int MaxRecentHistory = 10;
+    private const int OutputRecoveryAttemptCount = 6;
 
     public TrayApplicationContext()
     {
@@ -42,6 +49,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _mpvController = new MpvController(Log);
         _displaySleepBlocker = new DisplaySleepBlocker(Log);
         _settings = _settingsStore.Load();
+        _outputRecoveryTimer = new System.Windows.Forms.Timer
+        {
+            Interval = 350,
+        };
+        _outputRecoveryTimer.Tick += OnOutputRecoveryTimerTick;
         _webServerService = new WebServerService(
             () => _settings,
             () => CurrentAudioDeviceId,
@@ -108,7 +120,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         contextMenu.Items.Add(_favoritesMenuItem);
         contextMenu.Items.Add(_recentMenuItem);
         contextMenu.Items.Add(_audioOutputsMenuItem);
-        contextMenu.Items.Add(new ToolStripMenuItem("Refresh Outputs", null, (_, _) => RebuildAudioOutputsMenu()));
+        contextMenu.Items.Add(new ToolStripMenuItem("Refresh Outputs", null, (_, _) => RefreshAudioOutputsAndRecover()));
         contextMenu.Items.Add(_startupMenuItem);
         contextMenu.Items.Add(new ToolStripMenuItem("Player Settings...", null, (_, _) => ShowPlayerSettings()));
         contextMenu.Items.Add(new ToolStripMenuItem("Open Publish Folder", null, (_, _) => OpenPublishFolder()));
@@ -124,6 +136,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
             Visible = true,
         };
 
+        _audioDeviceService.OutputDevicesChanged += OnAudioOutputsChanged;
+        SystemEvents.PowerModeChanged += OnPowerModeChanged;
         RebuildAudioOutputsMenu();
         RefreshStartupMenu();
         RefreshFavoritesMenu();
@@ -142,8 +156,13 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     protected override void ExitThreadCore()
     {
+        _isExiting = true;
+        SystemEvents.PowerModeChanged -= OnPowerModeChanged;
+        _audioDeviceService.OutputDevicesChanged -= OnAudioOutputsChanged;
         _statusTimer.Stop();
         _statusTimer.Dispose();
+        _outputRecoveryTimer.Stop();
+        _outputRecoveryTimer.Dispose();
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
         _brandIcon.Dispose();
@@ -178,11 +197,28 @@ internal sealed class TrayApplicationContext : ApplicationContext
         return volumeMenu;
     }
 
-    private void RebuildAudioOutputsMenu()
+    private AudioOutputDevice? RebuildAudioOutputsMenu(bool reapplyAudioOutput = false)
     {
         _audioOutputsMenuItem.DropDownItems.Clear();
 
-        var devices = _audioDeviceService.GetOutputDevices();
+        IReadOnlyList<AudioOutputDevice> devices;
+        try
+        {
+            devices = _audioDeviceService.GetOutputDevices();
+        }
+        catch (Exception ex)
+        {
+            Log($"Could not enumerate audio outputs: {ex.Message}");
+            _currentAudioDeviceId = "auto";
+            _currentOutputItem.Text = BuildUnavailableOutputText();
+            _audioOutputsMenuItem.DropDownItems.Add(new ToolStripMenuItem("Audio outputs are temporarily unavailable")
+            {
+                Enabled = false,
+            });
+            MarkSelectedOutputUnavailable();
+            return null;
+        }
+
         if (devices.Count == 0)
         {
             _currentAudioDeviceId = "auto";
@@ -191,7 +227,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
             {
                 Enabled = false,
             });
-            return;
+            MarkSelectedOutputUnavailable();
+            return null;
         }
 
         var selectedDevice = ResolveSelectedAudioDevice(devices);
@@ -211,12 +248,39 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             _currentAudioDeviceId = "auto";
             _currentOutputItem.Text = BuildUnavailableOutputText();
+            MarkSelectedOutputUnavailable();
         }
         else
         {
             UpdateCurrentOutput(selectedDevice);
             _currentAudioDeviceId = selectedDevice.MpvAudioDeviceId;
+
+            var hadBeenUnavailable = reapplyAudioOutput
+                && Volatile.Read(ref _selectedOutputUnavailable) == 1;
+            if (hadBeenUnavailable && _mpvController.IsPlayerRunning(_settings))
+            {
+                var reapplied = _mpvController.TryApplyAudioOutput(
+                    _settings,
+                    selectedDevice.MpvAudioDeviceId,
+                    forceReinitialize: true);
+                if (reapplied)
+                {
+                    Interlocked.Exchange(ref _selectedOutputUnavailable, 0);
+                }
+
+                Log(reapplied
+                    ? $"Recovered saved audio output '{selectedDevice.FriendlyName}'."
+                    : $"Saved audio output '{selectedDevice.FriendlyName}' is back, but mpv is not ready to reapply it yet.");
+            }
+            else if (hadBeenUnavailable)
+            {
+                // There is nothing to repair until the next playback session. That session
+                // starts mpv with the saved endpoint, so avoid retrying an idle pipe forever.
+                Interlocked.Exchange(ref _selectedOutputUnavailable, 0);
+            }
         }
+
+        return selectedDevice;
     }
 
     private void RefreshFavoritesMenu()
@@ -356,7 +420,10 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         if (IsDisplayBackedAudioOutput(_settings.SelectedAudioDeviceName))
         {
-            _displaySleepBlocker.SetPlaybackActive(true);
+            _displaySleepBlocker.WakeDisplay();
+            RebuildAudioOutputsMenu();
+            MarkSelectedOutputUnavailable();
+            QueueAudioOutputRecovery("playback requested on a display audio output");
         }
     }
 
@@ -738,8 +805,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         if (_mpvController.ConsumeForcedAudioDeviceFailure())
         {
-            RefreshAudioOutputsMenuSoon();
-            ShowError("Selected audio output failed. Keeping it saved and using it again when it returns.");
+            MarkSelectedOutputUnavailable();
+            QueueAudioOutputRecovery("mpv reported that the selected audio output failed");
+            ShowError("Selected audio output failed. It will be retried automatically when it returns.");
             return;
         }
 
@@ -757,6 +825,116 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         _lastPlaybackErrorShown = playbackError;
         ShowError($"Playback error: {playbackError}");
+    }
+
+    private void OnAudioOutputsChanged(object? sender, AudioOutputsChangedEventArgs eventArgs)
+    {
+        if (_isExiting)
+        {
+            return;
+        }
+
+        if (eventArgs.AvailabilityChanged
+            && string.Equals(eventArgs.DeviceId, _settings.SelectedAudioDeviceId, StringComparison.Ordinal))
+        {
+            MarkSelectedOutputUnavailable();
+        }
+
+        QueueAudioOutputRecovery($"Windows audio output {eventArgs.Reason}");
+    }
+
+    private void OnPowerModeChanged(object? sender, PowerModeChangedEventArgs eventArgs)
+    {
+        if (eventArgs.Mode != PowerModes.Resume || _isExiting)
+        {
+            return;
+        }
+
+        MarkSelectedOutputUnavailable();
+        QueueAudioOutputRecovery(
+            "Windows resumed",
+            wakeDisplay: IsDisplayBackedAudioOutput(_settings.SelectedAudioDeviceName) && IsPlaybackActive());
+    }
+
+    private void RefreshAudioOutputsAndRecover()
+    {
+        MarkSelectedOutputUnavailable();
+        RebuildAudioOutputsMenu(reapplyAudioOutput: true);
+    }
+
+    private void QueueAudioOutputRecovery(string reason, bool wakeDisplay = false)
+    {
+        if (_isExiting || Interlocked.Exchange(ref _outputRecoveryQueued, 1) == 1)
+        {
+            return;
+        }
+
+        _uiContext.Post(_ =>
+        {
+            if (_isExiting)
+            {
+                return;
+            }
+
+            Interlocked.Exchange(ref _outputRecoveryQueued, 0);
+            if (wakeDisplay)
+            {
+                _displaySleepBlocker.WakeDisplay();
+            }
+
+            if (_outputRecoveryTimer.Enabled)
+            {
+                return;
+            }
+
+            Log($"Scheduling audio output recovery after {reason}.");
+            _outputRecoveryAttemptsRemaining = OutputRecoveryAttemptCount;
+            _outputRecoveryTimer.Interval = 350;
+            _outputRecoveryTimer.Start();
+        }, null);
+    }
+
+    private void OnOutputRecoveryTimerTick(object? sender, EventArgs eventArgs)
+    {
+        _outputRecoveryTimer.Stop();
+
+        if (_isMenuOpen)
+        {
+            _audioOutputsMenuDirty = true;
+            if (_outputRecoveryAttemptsRemaining > 1)
+            {
+                _outputRecoveryAttemptsRemaining--;
+                _outputRecoveryTimer.Interval = 1000;
+                _outputRecoveryTimer.Start();
+            }
+
+            return;
+        }
+
+        var selectedDevice = RebuildAudioOutputsMenu(reapplyAudioOutput: true);
+        var recoveryStillPending = Volatile.Read(ref _selectedOutputUnavailable) == 1;
+        if ((!recoveryStillPending && selectedDevice is not null) || _outputRecoveryAttemptsRemaining <= 1)
+        {
+            return;
+        }
+
+        _outputRecoveryAttemptsRemaining--;
+        _outputRecoveryTimer.Interval = 1000;
+        _outputRecoveryTimer.Start();
+    }
+
+    private void MarkSelectedOutputUnavailable()
+    {
+        if (!string.IsNullOrWhiteSpace(_settings.SelectedAudioDeviceId)
+            || !string.IsNullOrWhiteSpace(_settings.SelectedAudioDeviceName))
+        {
+            Interlocked.Exchange(ref _selectedOutputUnavailable, 1);
+        }
+    }
+
+    private bool IsPlaybackActive()
+    {
+        return _lastObservedStatus?.State is PlayerState.Playing or PlayerState.Loading;
     }
 
     private void UpdateCurrentOutput(AudioOutputDevice device)
@@ -782,6 +960,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         return outputName.Contains("display", StringComparison.OrdinalIgnoreCase)
             || outputName.Contains("monitor", StringComparison.OrdinalIgnoreCase)
             || outputName.Contains("hdmi", StringComparison.OrdinalIgnoreCase)
+            || outputName.Contains("lg", StringComparison.OrdinalIgnoreCase)
             || outputName.Contains("tv", StringComparison.OrdinalIgnoreCase)
             || outputName.Contains("projector", StringComparison.OrdinalIgnoreCase);
     }
@@ -826,10 +1005,16 @@ internal sealed class TrayApplicationContext : ApplicationContext
         if (selectedDevice is not null)
         {
             _currentAudioDeviceId = selectedDevice.MpvAudioDeviceId;
+            if (Volatile.Read(ref _selectedOutputUnavailable) == 1)
+            {
+                QueueAudioOutputRecovery("the saved audio output became available");
+            }
+
             return _currentAudioDeviceId;
         }
 
         _currentAudioDeviceId = "auto";
+        MarkSelectedOutputUnavailable();
         Log($"Saved audio output is unavailable (id={_settings.SelectedAudioDeviceId ?? "(none)"}, name={_settings.SelectedAudioDeviceName ?? "(none)"}); keeping it saved and using auto for this request.");
         RefreshAudioOutputsMenuSoon();
         return _currentAudioDeviceId;
@@ -874,13 +1059,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private void RefreshAudioOutputsMenuSoon()
     {
-        if (_isMenuOpen)
-        {
-            _audioOutputsMenuDirty = true;
-            return;
-        }
-
-        _uiContext.Post(_ => RebuildAudioOutputsMenu(), null);
+        QueueAudioOutputRecovery("the saved audio output is unavailable");
     }
 
     private static void CopySettings(AppSettings source, AppSettings destination)

@@ -10,12 +10,35 @@
             margin: 0;
             padding: 0;
         }
+
+        :root {
+            color-scheme: dark;
+            --ink: #160d12;
+            --plum: #32151f;
+            --bark: #523026;
+            --leaf: #718b45;
+            --leaf-bright: #9aad62;
+            --blossom: #f06f7f;
+            --blossom-bright: #ff9aa9;
+            --petal: #f6b2c2;
+            --cream: #fff4e8;
+            --muted: #d8bab5;
+            --surface: rgba(31, 17, 21, 0.84);
+            --surface-raised: rgba(53, 28, 31, 0.78);
+            --surface-border: rgba(246, 178, 194, 0.18);
+        }
         
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-            background: linear-gradient(135deg, #101820 0%, #233d4d 52%, #4f2d36 100%);
+            background-color: var(--ink);
+            background-image:
+                radial-gradient(circle at 12% 8%, rgba(211, 51, 111, 0.2), transparent 34%),
+                radial-gradient(circle at 88% 16%, rgba(222, 100, 80, 0.17), transparent 32%),
+                radial-gradient(circle at 74% 88%, rgba(113, 139, 69, 0.13), transparent 34%),
+                linear-gradient(145deg, var(--ink) 0%, var(--plum) 50%, #282217 100%);
+            background-attachment: fixed;
             min-height: 100vh;
-            color: #f8fafc;
+            color: var(--cream);
             padding: 16px;
         }
         
@@ -25,20 +48,68 @@
         }
         
         h1 {
-            text-align: center;
-            margin-bottom: 18px;
+            display: block;
+            margin: 0;
+            font-size: clamp(2rem, 7vw, 3.35rem);
+            font-weight: 720;
+            letter-spacing: 0.055em;
+            line-height: 1.2;
+            padding: 0.04em 0.08em 0.2em 0;
+            overflow: visible;
+            background: linear-gradient(105deg, var(--cream) 8%, var(--blossom-bright) 52%, var(--petal) 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            color: transparent;
+        }
+
+        .brand-header {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: clamp(10px, 3vw, 22px);
+            margin: 0 auto 18px;
+        }
+
+        .brand-mark {
+            width: clamp(112px, 30vw, 190px);
+            height: auto;
+            flex: 0 0 auto;
+            filter: drop-shadow(0 12px 20px rgba(0, 0, 0, 0.3));
+        }
+
+        .brand-copy {
+            min-width: 0;
+            overflow: visible;
+            filter: drop-shadow(0 3px 16px rgba(240, 111, 127, 0.2));
+        }
+
+        .brand-kicker {
+            display: block;
+            margin-bottom: 8px;
+            color: var(--petal);
+            font-size: clamp(0.62rem, 2vw, 0.76rem);
             font-weight: 650;
-            letter-spacing: 2px;
+            letter-spacing: 0.24em;
+            text-transform: uppercase;
+        }
+
+        .brand-flourish {
+            display: block;
+            width: min(100%, 230px);
+            height: 2px;
+            margin-top: -0.02em;
+            border-radius: 999px;
+            background: linear-gradient(90deg, var(--blossom), var(--petal) 62%, transparent);
         }
         
         .card {
-            background: rgba(12, 18, 27, 0.74);
+            background: linear-gradient(145deg, var(--surface-raised), var(--surface));
             backdrop-filter: blur(10px);
             border-radius: 10px;
             padding: 18px;
             margin-bottom: 16px;
-            border: 1px solid rgba(226, 232, 240, 0.14);
-            box-shadow: 0 16px 38px rgba(0, 0, 0, 0.22);
+            border: 1px solid var(--surface-border);
+            box-shadow: 0 16px 38px rgba(10, 5, 7, 0.3), inset 0 1px 0 rgba(255, 244, 232, 0.035);
         }
         
         .form-group {
@@ -51,23 +122,23 @@
             font-size: 14px;
             text-transform: uppercase;
             letter-spacing: 1px;
-            color: #cbd5e1;
+            color: var(--muted);
         }
         
         input[type="text"] {
             width: 100%;
             padding: 12px 16px;
-            border: 1px solid rgba(148, 163, 184, 0.4);
+            border: 1px solid rgba(246, 178, 194, 0.38);
             border-radius: 8px;
-            background: rgba(248, 250, 252, 0.94);
-            color: #111827;
+            background: rgba(255, 244, 232, 0.96);
+            color: var(--ink);
             font-size: 16px;
         }
         
         input[type="text"]:focus {
             outline: none;
-            border-color: #f97316;
-            box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.26);
+            border-color: var(--blossom);
+            box-shadow: 0 0 0 3px rgba(240, 111, 127, 0.24);
         }
         
         .btn {
@@ -82,33 +153,77 @@
             font-weight: 600;
         }
 
+        .button-content {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 9px;
+        }
+
+        .control-icon {
+            width: 22px;
+            height: 22px;
+            flex: 0 0 auto;
+            fill: none;
+            stroke: currentColor;
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        .playback-command {
+            display: inline-flex;
+            min-height: 68px;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 7px;
+        }
+
+        .playback-command .control-icon {
+            width: 25px;
+            height: 25px;
+        }
+
+        .compact-command {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+        }
+
+        .compact-command .control-icon {
+            width: 16px;
+            height: 16px;
+        }
+
         .play-actions {
             display: grid;
             gap: 10px;
         }
         
         .btn-primary {
-            background: #f97316;
-            color: #111827;
+            background: var(--blossom);
+            color: var(--ink);
             width: 100%;
         }
         
         .btn-primary:hover {
-            background: #fb923c;
+            background: var(--blossom-bright);
             transform: translateY(-2px);
-            box-shadow: 0 4px 14px rgba(249, 115, 22, 0.36);
+            box-shadow: 0 4px 14px rgba(240, 111, 127, 0.34);
         }
 
         .btn-secondary {
-            background: rgba(20, 184, 166, 0.16);
-            border-color: rgba(45, 212, 191, 0.34);
-            color: #ccfbf1;
+            background: rgba(113, 139, 69, 0.22);
+            border-color: rgba(154, 173, 98, 0.4);
+            color: #eff4d4;
             width: 100%;
         }
 
         .btn-secondary:hover {
-            background: rgba(20, 184, 166, 0.26);
-            border-color: rgba(94, 234, 212, 0.58);
+            background: rgba(113, 139, 69, 0.34);
+            border-color: rgba(176, 194, 116, 0.66);
             transform: translateY(-2px);
         }
         
@@ -119,17 +234,17 @@
         }
         
         .btn-control {
-            background: rgba(248, 250, 252, 0.1);
-            border-color: rgba(226, 232, 240, 0.16);
-            color: #f8fafc;
+            background: rgba(255, 229, 218, 0.075);
+            border-color: rgba(246, 178, 194, 0.17);
+            color: var(--cream);
             padding: 16px;
             min-width: 0;
             white-space: normal;
         }
         
         .btn-control:hover {
-            background: rgba(248, 250, 252, 0.17);
-            border-color: rgba(226, 232, 240, 0.3);
+            background: rgba(240, 111, 127, 0.15);
+            border-color: rgba(255, 154, 169, 0.42);
         }
         
         .btn-control:disabled {
@@ -143,12 +258,16 @@
             gap: 16px;
             margin-top: 12px;
         }
+
+        .volume-control > .control-icon {
+            color: var(--leaf-bright);
+        }
         
         input[type="range"] {
             flex: 1;
             height: 8px;
             -webkit-appearance: none;
-            background: rgba(203, 213, 225, 0.36);
+            background: rgba(216, 186, 181, 0.3);
             border-radius: 4px;
             outline: none;
         }
@@ -157,7 +276,7 @@
             -webkit-appearance: none;
             width: 24px;
             height: 24px;
-            background: #14b8a6;
+            background: var(--leaf-bright);
             border-radius: 50%;
             cursor: pointer;
             transition: all 0.2s ease;
@@ -165,7 +284,7 @@
         
         input[type="range"]::-webkit-slider-thumb:hover {
             transform: scale(1.1);
-            box-shadow: 0 0 0 4px rgba(20, 184, 166, 0.24);
+            box-shadow: 0 0 0 4px rgba(154, 173, 98, 0.24);
         }
         
         .volume-value {
@@ -196,7 +315,7 @@
             justify-content: space-between;
             gap: 16px;
             padding: 8px 0;
-            border-bottom: 1px solid rgba(226, 232, 240, 0.12);
+            border-bottom: 1px solid rgba(246, 178, 194, 0.12);
         }
         
         .status-item:last-child {
@@ -216,8 +335,8 @@
             justify-content: space-between;
             padding: 10px 12px;
             border-radius: 8px;
-            background: rgba(248, 250, 252, 0.08);
-            border: 1px solid rgba(226, 232, 240, 0.08);
+            background: rgba(255, 229, 218, 0.055);
+            border: 1px solid rgba(246, 178, 194, 0.1);
         }
 
         .saved-meta {
@@ -258,9 +377,9 @@
         }
 
         .icon-btn.is-active {
-            color: #facc15;
-            border-color: rgba(250, 204, 21, 0.46);
-            background: rgba(250, 204, 21, 0.16);
+            color: #f5c86f;
+            border-color: rgba(245, 200, 111, 0.46);
+            background: rgba(245, 200, 111, 0.14);
         }
 
         .btn-small {
@@ -294,12 +413,12 @@
         }
         
         .message.success {
-            background: rgba(20, 184, 166, 0.9);
+            background: rgba(92, 119, 52, 0.94);
             display: block;
         }
         
         .message.error {
-            background: rgba(220, 38, 38, 0.92);
+            background: rgba(167, 42, 61, 0.94);
             display: block;
         }
         
@@ -323,6 +442,15 @@
         }
 
         @media (max-width: 520px) {
+            .brand-header {
+                align-items: flex-end;
+                justify-content: flex-start;
+            }
+
+            .brand-mark {
+                width: min(34vw, 138px);
+            }
+
             .saved-row {
                 align-items: stretch;
                 flex-direction: column;
@@ -377,10 +505,14 @@
                 max-width: 1120px;
             }
 
-            h1 {
+            .brand-header {
                 grid-area: title;
-                margin-bottom: 2px;
-                text-align: left;
+                justify-content: flex-start;
+                margin: 0 0 2px;
+            }
+
+            .brand-mark {
+                width: 178px;
             }
 
             .card {
@@ -410,8 +542,26 @@
     </style>
 </head>
 <body>
+    <svg width="0" height="0" aria-hidden="true" focusable="false" style="position: absolute; overflow: hidden;">
+        <symbol id="icon-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></symbol>
+        <symbol id="icon-queue" viewBox="0 0 24 24"><path d="M4 6h10M4 12h7M4 18h7M17 12v7M13.5 15.5h7"/></symbol>
+        <symbol id="icon-pause" viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></symbol>
+        <symbol id="icon-toggle" viewBox="0 0 24 24"><path d="M6 5v14l8-7zM18 6v12"/></symbol>
+        <symbol id="icon-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1"/></symbol>
+        <symbol id="icon-skip" viewBox="0 0 24 24"><path d="M6 5v14l9-7zM18 5v14"/></symbol>
+        <symbol id="icon-power" viewBox="0 0 24 24"><path d="M12 3v9M7.2 5.8a8 8 0 1 0 9.6 0"/></symbol>
+        <symbol id="icon-volume" viewBox="0 0 24 24"><path d="M5 10v4h4l5 4V6L9 10zM17 9a4 4 0 0 1 0 6M19 6.5a8 8 0 0 1 0 11"/></symbol>
+        <symbol id="icon-mute" viewBox="0 0 24 24"><path d="M5 10v4h4l5 4V6L9 10zM17 10l4 4M21 10l-4 4"/></symbol>
+    </svg>
     <div class="container">
-        <h1>WinTubeRelay</h1>
+        <header class="brand-header">
+            <img class="brand-mark" src="static/crepe-myrtle-header.png" alt="A naturally branching crepe myrtle in bloom">
+            <div class="brand-copy">
+                <span class="brand-kicker">Natural playback</span>
+                <h1>WinTubeRelay</h1>
+                <span class="brand-flourish" aria-hidden="true"></span>
+            </div>
+        </header>
         
         <div class="card play-card">
             <div class="form-group">
@@ -421,11 +571,11 @@
             
             <div class="play-actions">
                 <button class="btn btn-primary" onclick="play(false, 'play')">
-                    <span id="playText">Play Now</span>
+                    <span id="playText" class="button-content"><svg class="control-icon" aria-hidden="true"><use href="#icon-play"></use></svg>Play Now</span>
                     <span id="playSpinner" class="loading" style="display: none;"></span>
                 </button>
                 <button class="btn btn-secondary" onclick="play(true, 'queue')">
-                    <span id="queueText">Add to Queue</span>
+                    <span id="queueText" class="button-content"><svg class="control-icon" aria-hidden="true"><use href="#icon-queue"></use></svg>Add to Queue</span>
                     <span id="queueSpinner" class="loading" style="display: none;"></span>
                 </button>
             </div>
@@ -465,22 +615,23 @@
         <div class="card controls-card">
             <label>Playback Controls</label>
             <div class="controls">
-                <button class="btn btn-control" onclick="pause()">Pause</button>
-                <button class="btn btn-control" onclick="resume()">Resume</button>
-                <button class="btn btn-control" onclick="toggle()">Toggle</button>
-                <button class="btn btn-control" onclick="stop()">Stop</button>
-                <button class="btn btn-control" onclick="skip()">Skip</button>
-                <button class="btn btn-control" onclick="quit()">Quit</button>
+                <button class="btn btn-control playback-command" onclick="pause()"><svg class="control-icon" aria-hidden="true"><use href="#icon-pause"></use></svg><span>Pause</span></button>
+                <button class="btn btn-control playback-command" onclick="resume()"><svg class="control-icon" aria-hidden="true"><use href="#icon-play"></use></svg><span>Resume</span></button>
+                <button class="btn btn-control playback-command" onclick="toggle()"><svg class="control-icon" aria-hidden="true"><use href="#icon-toggle"></use></svg><span>Toggle</span></button>
+                <button class="btn btn-control playback-command" onclick="stop()"><svg class="control-icon" aria-hidden="true"><use href="#icon-stop"></use></svg><span>Stop</span></button>
+                <button class="btn btn-control playback-command" onclick="skip()"><svg class="control-icon" aria-hidden="true"><use href="#icon-skip"></use></svg><span>Skip</span></button>
+                <button class="btn btn-control playback-command" onclick="quit()"><svg class="control-icon" aria-hidden="true"><use href="#icon-power"></use></svg><span>Quit</span></button>
             </div>
             <div class="control-section">
                 <label>Volume</label>
                 <div class="volume-control">
+                    <svg class="control-icon" aria-hidden="true"><use href="#icon-volume"></use></svg>
                     <input type="range" id="volumeSlider" min="0" max="100" value="50" onchange="setVolume(this.value)">
                     <span class="volume-value" id="volumeValue">50%</span>
                 </div>
                 <div class="controls" style="margin-top: 16px;">
-                    <button class="btn btn-control" onclick="mute()">Mute</button>
-                    <button class="btn btn-control" onclick="unmute()">Unmute</button>
+                    <button class="btn btn-control compact-command" onclick="mute()"><svg class="control-icon" aria-hidden="true"><use href="#icon-mute"></use></svg><span>Mute</span></button>
+                    <button class="btn btn-control compact-command" onclick="unmute()"><svg class="control-icon" aria-hidden="true"><use href="#icon-volume"></use></svg><span>Unmute</span></button>
                 </div>
             </div>
         </div>
@@ -516,6 +667,20 @@
             return {
                 'Content-Type': 'application/json'
             };
+        }
+
+        function setButtonIcon(button, iconName, label) {
+            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            svg.setAttribute('class', 'control-icon');
+            svg.setAttribute('aria-hidden', 'true');
+
+            const use = document.createElementNS('http://www.w3.org/2000/svg', 'use');
+            use.setAttribute('href', `#icon-${iconName}`);
+            svg.appendChild(use);
+
+            const text = document.createElement('span');
+            text.textContent = label;
+            button.replaceChildren(svg, text);
         }
         
         function showMessage(text, isError = false) {
@@ -964,14 +1129,14 @@
                 }
 
                 const playButton = document.createElement('button');
-                playButton.className = 'btn btn-control btn-small';
-                playButton.textContent = 'Play';
+                playButton.className = 'btn btn-control btn-small compact-command';
+                setButtonIcon(playButton, 'play', 'Play');
                 playButton.onclick = () => playSavedUrl(item.url, false);
                 actions.appendChild(playButton);
 
                 const queueButton = document.createElement('button');
-                queueButton.className = 'btn btn-control btn-small';
-                queueButton.textContent = 'Queue';
+                queueButton.className = 'btn btn-control btn-small compact-command';
+                setButtonIcon(queueButton, 'queue', 'Queue');
                 queueButton.onclick = () => playSavedUrl(item.url, true);
                 actions.appendChild(queueButton);
 
