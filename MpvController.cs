@@ -530,7 +530,8 @@ internal sealed class MpvController : IDisposable
                 "--ytdl=yes",
             };
 
-            var ytdlOptions = new List<string>();
+            var ytdlHookOptions = new List<string>();
+            var ytdlRawOptions = new List<string>();
             if (!string.IsNullOrWhiteSpace(settings.YtDlpPath))
             {
                 if (!File.Exists(settings.YtDlpPath))
@@ -539,18 +540,28 @@ internal sealed class MpvController : IDisposable
                 }
                 else
                 {
-                    ytdlOptions.Add($"ytdl_path={settings.YtDlpPath}");
+                    ytdlHookOptions.Add($"ytdl_path={settings.YtDlpPath}");
                 }
             }
 
             if (!string.IsNullOrWhiteSpace(settings.YtDlpBrowser))
             {
-                ytdlOptions.Add($"cookies_from_browser={settings.YtDlpBrowser}");
+                ytdlRawOptions.Add($"cookies-from-browser={settings.YtDlpBrowser}");
             }
 
-            if (ytdlOptions.Count > 0)
+            if (IsExecutableOnPath("node.exe"))
             {
-                arguments.Add($"--script-opts=ytdl_hook-{string.Join(';', ytdlOptions)}");
+                ytdlRawOptions.Add("js-runtimes=node");
+            }
+
+            if (ytdlHookOptions.Count > 0)
+            {
+                arguments.Add($"--script-opts=ytdl_hook-{string.Join(',', ytdlHookOptions)}");
+            }
+
+            if (ytdlRawOptions.Count > 0)
+            {
+                arguments.Add($"--ytdl-raw-options={string.Join(',', ytdlRawOptions)}");
             }
 
             if (!string.IsNullOrWhiteSpace(settings.MpvLogFilePath))
@@ -1012,6 +1023,31 @@ internal sealed class MpvController : IDisposable
     private static string BuildPipePath(AppSettings settings)
     {
         return $@"\\.\pipe\{NormalizePipeName(settings.MpvPipeName)}";
+    }
+
+    private static bool IsExecutableOnPath(string executableName)
+    {
+        var path = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        foreach (var directory in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            try
+            {
+                if (File.Exists(Path.Combine(directory, executableName)))
+                {
+                    return true;
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        return false;
     }
 
     private static string NormalizePipeName(string pipeName)
