@@ -42,6 +42,13 @@ The app starts with these defaults, which you can change from the tray menu:
 - browser cookies: `firefox`
 - web UI/API port: `8765`
 
+## Logs
+
+The tray log at `%AppData%\WinTubeRelay\wintuberelay.log` is automatically rotated at
+1 MiB. Up to three numbered archives (`.1` through `.3`) are retained. The optional
+mpv log configured in Player Settings follows the same retention policy whenever mpv
+starts, so stale logs cannot accumulate across player launches.
+
 ## Build
 
 ```powershell

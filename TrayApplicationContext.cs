@@ -1159,9 +1159,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
             var logDirectory = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                 "WinTubeRelay");
-            Directory.CreateDirectory(logDirectory);
             var logPath = Path.Combine(logDirectory, "wintuberelay.log");
-            File.AppendAllText(logPath, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {message}{Environment.NewLine}");
+            LogFileRetention.AppendLine(logPath, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} {message}{Environment.NewLine}");
         }
         catch
         {

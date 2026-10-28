@@ -566,6 +566,15 @@ internal sealed class MpvController : IDisposable
 
             if (!string.IsNullOrWhiteSpace(settings.MpvLogFilePath))
             {
+                try
+                {
+                    LogFileRetention.RotateIfNeeded(settings.MpvLogFilePath);
+                }
+                catch (Exception ex)
+                {
+                    _log($"Could not rotate mpv log file '{settings.MpvLogFilePath}': {ex.Message}");
+                }
+
                 arguments.Add($"--log-file={settings.MpvLogFilePath}");
             }
 
