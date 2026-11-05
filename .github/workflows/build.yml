@@ -27,15 +27,15 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
+      - name: Playback recovery regression
+        # Run before RID restore: the harness restores a non-RID Debug project reference.
+        run: dotnet run --project tests/PlaybackRecoveryTests/PlaybackRecoveryTests.csproj -c Debug
+
       - name: Restore
         run: dotnet restore $env:PROJECT_PATH -r $env:RID
 
       - name: Build
         run: dotnet build $env:PROJECT_PATH -c Release -r $env:RID --no-restore
-
-      - name: Playback recovery regression
-        # Fixed project path and Debug configuration; no workflow event text is interpolated.
-        run: dotnet run --project tests/PlaybackRecoveryTests/PlaybackRecoveryTests.csproj -c Debug
 
       - name: Publish
         run: >
