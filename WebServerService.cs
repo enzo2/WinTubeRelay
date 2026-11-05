@@ -11,23 +11,26 @@ internal sealed class WebServerService : IAsyncDisposable
     private const int MaxRecentHistory = 10;
     private readonly Func<AppSettings> _getSettings;
     private readonly Func<string> _getCurrentAudioDeviceId;
-    private readonly MpvController _mpvController;
+    private readonly IMpvPlayback _mpvController;
     private readonly Action _saveSettings;
     private readonly Action<string> _log;
+    private readonly IPlaybackPreparer? _preparePlayback;
     private WebApplication? _app;
 
     public WebServerService(
         Func<AppSettings> getSettings,
         Func<string> getCurrentAudioDeviceId,
-        MpvController mpvController,
+        IMpvPlayback mpvController,
         Action saveSettings,
-        Action<string> log)
+        Action<string> log,
+        IPlaybackPreparer? preparePlayback = null)
     {
         _getSettings = getSettings;
         _getCurrentAudioDeviceId = getCurrentAudioDeviceId;
         _mpvController = mpvController;
         _saveSettings = saveSettings;
         _log = log;
+        _preparePlayback = preparePlayback;
     }
 
     public async Task StartAsync(CancellationToken cancellationToken = default)
@@ -107,7 +110,8 @@ internal sealed class WebServerService : IAsyncDisposable
 
             try
             {
-                _mpvController.Play(settings, request.Url, request.Enqueue, _getCurrentAudioDeviceId());
+                var prepared = PrepareAudioDevice(request.Enqueue ? PlaybackIntent.Enqueue : PlaybackIntent.Play);
+                _mpvController.Play(settings, request.Url, request.Enqueue, prepared);
                 return Results.Json(new { ok = true, url = request.Url, enqueue = request.Enqueue, mpv = (object?)null });
             }
             catch (Exception ex)
@@ -131,7 +135,8 @@ internal sealed class WebServerService : IAsyncDisposable
 
         app.MapPost("/resume", (HttpContext context) => Execute(context, settings =>
         {
-            _mpvController.Resume(settings, _getCurrentAudioDeviceId());
+            var prepared = PrepareAudioDevice(PlaybackIntent.Resume);
+            _mpvController.Resume(settings, prepared);
             return Results.Json(new { ok = true, mpv = (object?)null });
         }));
 
@@ -282,6 +287,16 @@ internal sealed class WebServerService : IAsyncDisposable
             _saveSettings();
             return Results.Json(new { ok = true });
         }));
+    }
+
+    private string PrepareAudioDevice(PlaybackIntent intent)
+    {
+        if (_preparePlayback is null)
+        {
+            return _getCurrentAudioDeviceId();
+        }
+
+        return _preparePlayback.Prepare(intent);
     }
 
     private IResult Execute(HttpContext context, Func<AppSettings, IResult> action)

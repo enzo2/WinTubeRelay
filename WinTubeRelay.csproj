@@ -27,6 +27,17 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="WinTubeRelay.PlaybackTests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="tests/**/*.cs" />
+    <Content Remove="tests/**" />
+    <None Remove="tests/**" />
+    <EmbeddedResource Remove="tests/**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Content Include="static\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>

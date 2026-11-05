@@ -33,6 +33,10 @@ jobs:
       - name: Build
         run: dotnet build $env:PROJECT_PATH -c Release -r $env:RID --no-restore
 
+      - name: Playback recovery regression
+        # Fixed project path and Debug configuration; no workflow event text is interpolated.
+        run: dotnet run --project tests/PlaybackRecoveryTests/PlaybackRecoveryTests.csproj -c Debug
+
       - name: Publish
         run: >
           dotnet publish $env:PROJECT_PATH

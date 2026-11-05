@@ -12,6 +12,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly MpvController _mpvController;
     private readonly WebServerService _webServerService;
     private readonly DisplaySleepBlocker _displaySleepBlocker;
+    private readonly IPlaybackPreparer _playbackPreparer;
     private readonly AppSettings _settings;
     private readonly NotifyIcon _notifyIcon;
     private readonly Icon _brandIcon;
@@ -54,12 +55,27 @@ internal sealed class TrayApplicationContext : ApplicationContext
             Interval = 350,
         };
         _outputRecoveryTimer.Tick += OnOutputRecoveryTimerTick;
+        _playbackPreparer = new DisplayPlaybackCoordinator(
+            () => _settings.SelectedAudioDeviceId,
+            () => _settings.SelectedAudioDeviceName,
+            () => _audioDeviceService.GetOutputDevices(),
+            () => _displaySleepBlocker.WakeDisplay(),
+            InvokeOnUiThread,
+            _mpvController,
+            _settings,
+            Log,
+            onStillUnavailable: () =>
+            {
+                MarkSelectedOutputUnavailable();
+                QueueAudioOutputRecovery("playback requested while the saved output was unavailable");
+            });
         _webServerService = new WebServerService(
             () => _settings,
             () => CurrentAudioDeviceId,
             _mpvController,
             SaveSettings,
-            Log);
+            Log,
+            _playbackPreparer);
         _brandIcon = Branding.CreateTrayIcon();
 
         _statusItem = new ToolStripMenuItem("Status: starting...")
@@ -177,7 +193,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         var playbackMenu = new ToolStripMenuItem("Playback");
         playbackMenu.DropDownItems.Add(new ToolStripMenuItem("Pause", null, (_, _) => RunPlayerAction("Paused playback.", controller => controller.Pause(_settings, CurrentAudioDeviceId))));
-        playbackMenu.DropDownItems.Add(new ToolStripMenuItem("Resume", null, (_, _) => RunPlayerAction("Resumed playback.", controller => controller.Resume(_settings, CurrentAudioDeviceId))));
+        playbackMenu.DropDownItems.Add(new ToolStripMenuItem("Resume", null, (_, _) => ResumePlayback()));
         playbackMenu.DropDownItems.Add(new ToolStripMenuItem("Toggle Pause", null, (_, _) => RunPlayerAction("Toggled playback.", controller => controller.Toggle(_settings, CurrentAudioDeviceId))));
         playbackMenu.DropDownItems.Add(new ToolStripMenuItem("Stop", null, (_, _) => RunPlayerAction("Stopped playback.", controller => controller.Stop(_settings, CurrentAudioDeviceId))));
         playbackMenu.DropDownItems.Add(new ToolStripMenuItem("Skip", null, (_, _) => RunPlayerAction("Skipped to the next item.", controller => controller.Skip(_settings, CurrentAudioDeviceId))));
@@ -410,21 +426,63 @@ internal sealed class TrayApplicationContext : ApplicationContext
             return;
         }
 
-        PrepareDisplayForPlayback();
-        RunPlayerAction(
-            enqueue ? "Queued URL." : "Playback request sent.",
-            controller => controller.Play(_settings, url, enqueue, CurrentAudioDeviceId));
+        Task.Run(() =>
+        {
+            try
+            {
+                var prepared = _playbackPreparer.Prepare(enqueue ? PlaybackIntent.Enqueue : PlaybackIntent.Play);
+                _uiContext.Post(_ =>
+                {
+                    RunPlayerAction(
+                        enqueue ? "Queued URL." : "Playback request sent.",
+                        controller => controller.Play(_settings, url, enqueue, prepared));
+                }, null);
+            }
+            catch (Exception ex)
+            {
+                _uiContext.Post(_ =>
+                {
+                    ShowError(ex.Message);
+                    Log(ex.ToString());
+                }, null);
+            }
+        });
     }
 
-    private void PrepareDisplayForPlayback()
+    private void ResumePlayback()
     {
-        if (IsDisplayBackedAudioOutput(_settings.SelectedAudioDeviceName))
+        Task.Run(() =>
         {
-            _displaySleepBlocker.WakeDisplay();
-            RebuildAudioOutputsMenu();
-            MarkSelectedOutputUnavailable();
-            QueueAudioOutputRecovery("playback requested on a display audio output");
+            try
+            {
+                var prepared = _playbackPreparer.Prepare(PlaybackIntent.Resume);
+                _uiContext.Post(_ =>
+                {
+                    RunPlayerAction(
+                        "Resumed playback.",
+                        controller => controller.Resume(_settings, prepared));
+                }, null);
+            }
+            catch (Exception ex)
+            {
+                _uiContext.Post(_ =>
+                {
+                    ShowError(ex.Message);
+                    Log(ex.ToString());
+                }, null);
+            }
+        });
+    }
+
+    private void InvokeOnUiThread(Action action)
+    {
+        if (SynchronizationContext.Current == _uiContext)
+        {
+            action();
+            return;
         }
+
+        _uiContext.Send(_ => action(), null);
     }
 
     private void AddFavoriteFromPrompt()
@@ -957,12 +1015,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             return false;
         }
 
-        return outputName.Contains("display", StringComparison.OrdinalIgnoreCase)
-            || outputName.Contains("monitor", StringComparison.OrdinalIgnoreCase)
-            || outputName.Contains("hdmi", StringComparison.OrdinalIgnoreCase)
-            || outputName.Contains("lg", StringComparison.OrdinalIgnoreCase)
-            || outputName.Contains("tv", StringComparison.OrdinalIgnoreCase)
-            || outputName.Contains("projector", StringComparison.OrdinalIgnoreCase);
+        return DisplayOutputClassifier.IsDisplayBacked(outputName);
     }
 
     private void ShowInfo(string message)

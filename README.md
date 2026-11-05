@@ -93,4 +93,5 @@ publish\win-x64\WinTubeRelay.exe
 - Audio device enumeration uses `NAudio`.
 - `mpv` is started on demand and then controlled over its named pipe.
 - Audio output selection is converted from the Windows endpoint ID into the `wasapi/{guid}` form that `mpv --audio-device=help` reports.
+- `POST /play` and `POST /resume` use the same display-wake path as the tray. A display-backed output is woken on the UI thread and playback waits briefly for that output to return. If mpv is already running and that output had been missing, its audio device is reinitialized in place without clearing the playlist or restarting the process. If the output does not return, playback uses `auto`. Invalid or unauthorized requests do not wake the display.
 - The web UI also includes favorites/recent management, backed by the same persisted settings file as the tray app.

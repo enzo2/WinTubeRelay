@@ -30,7 +30,7 @@ internal sealed record ApiStatusSnapshot(
     List<string> Errors,
     string PlayerState);
 
-internal sealed class MpvController : IDisposable
+internal sealed class MpvController : IMpvPlayback, IDisposable
 {
     private readonly Action<string> _log;
     private readonly object _gate = new();
