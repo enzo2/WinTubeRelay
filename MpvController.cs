@@ -30,6 +30,11 @@ internal sealed record ApiStatusSnapshot(
     List<string> Errors,
     string PlayerState);
 
+internal sealed class MpvCommandException(string? error) : InvalidOperationException($"mpv IPC error: {error}")
+{
+    public string? Error { get; } = error;
+}
+
 internal sealed class MpvController : IMpvPlayback, IDisposable
 {
     private readonly Action<string> _log;
@@ -517,7 +522,17 @@ internal sealed class MpvController : IMpvPlayback, IDisposable
 
     private T? GetProperty<T>(AppSettings settings, string propertyName, bool ensureStarted = true)
     {
-        var response = SendIpcRequest(settings, new object[] { "get_property", propertyName }, ensureStarted);
+        JsonElement response;
+        try
+        {
+            response = SendIpcRequest(settings, new object[] { "get_property", propertyName }, ensureStarted);
+        }
+        catch (MpvCommandException ex) when (ex.Error == "property unavailable")
+        {
+            // No file is loaded while idle; optional media properties are absent.
+            // Command failures elsewhere must still propagate rather than appear successful.
+            return default;
+        }
         if (!response.TryGetProperty("data", out var data))
         {
             return default;
@@ -861,7 +876,7 @@ internal sealed class MpvController : IMpvPlayback, IDisposable
                 var error = errorElement.ValueKind == JsonValueKind.String ? errorElement.GetString() : errorElement.ToString();
                 if (!string.Equals(error, "success", StringComparison.OrdinalIgnoreCase))
                 {
-                    throw new InvalidOperationException($"mpv IPC error: {error}");
+                    throw new MpvCommandException(error);
                 }
             }
 

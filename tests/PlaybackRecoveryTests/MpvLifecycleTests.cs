@@ -98,6 +98,20 @@ internal static class MpvLifecycleTests
         pipe.PropertyJson["playlist-count"] = "0";
         pipe.PropertyJson["volume"] = "80";
         pipe.PropertyJson["mute"] = "false";
+        // Real mpv reports unloaded media properties as unavailable, not success/null.
+        pipe.ResponseOverride = line =>
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(line);
+            var root = document.RootElement;
+            var command = root.GetProperty("command");
+            if (command[0].GetString() == "get_property"
+                && command[1].GetString() is "path" or "media-title" or "time-pos" or "duration")
+            {
+                var id = root.GetProperty("request_id").GetInt32();
+                return $"{{\"request_id\":{id},\"error\":\"property unavailable\"}}";
+            }
+            return null;
+        };
 
         using var controller = new MpvController(_ => { });
         var settings = IsolatedSettings(pipe.PipeName);
