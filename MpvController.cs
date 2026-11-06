@@ -34,6 +34,9 @@ internal sealed class MpvController : IMpvPlayback, IDisposable
 {
     private readonly Action<string> _log;
     private readonly object _gate = new();
+    private readonly object _operationGate = new();
+    internal static Func<Stream, Stream>? IpcStreamWrapperForTests { get; set; }
+    internal bool HasPendingResumeForTests => _pendingResumePositionSeconds is not null;
     private Process? _mpvProcess;
     private int _requestId;
     private CancellationTokenSource? _eventMonitorCts;
@@ -51,6 +54,9 @@ internal sealed class MpvController : IMpvPlayback, IDisposable
     private bool _autoResumeInFlight;
     private bool _playbackStartedSinceLoad = true;
     private string? _lastPlaybackError;
+    private bool _intentionalPause;
+    private bool _blockUnexpectedIdle;
+    private double? _pendingResumePositionSeconds;
     private bool _forcedAudioDeviceFailure;
 
     public MpvController(Action<string> log)
@@ -85,7 +91,9 @@ internal sealed class MpvController : IMpvPlayback, IDisposable
 
     public void Stop(AppSettings settings, string audioDeviceId)
     {
-        SuppressAutoResume(TimeSpan.FromSeconds(5), "stop command");
+        _intentionalPause = false;
+        _blockUnexpectedIdle = true;
+        SuppressAutoResume(TimeSpan.FromSeconds(30), "stop command");
         EnsureMpv(settings, audioDeviceId);
         SendIpcRequest(settings, new object[] { "stop" });
         SendIpcRequest(settings, new object[] { "playlist-clear" });
@@ -93,23 +101,38 @@ internal sealed class MpvController : IMpvPlayback, IDisposable
 
     public void Pause(AppSettings settings, string audioDeviceId)
     {
+        _intentionalPause = true;
+        _pendingResumePositionSeconds = null;
+        _autoResumeInFlight = false;
+        SuppressAutoResume(TimeSpan.FromSeconds(30), "pause command");
         SetProperty(settings, audioDeviceId, "pause", true);
     }
 
     public void Resume(AppSettings settings, string audioDeviceId)
     {
+        _intentionalPause = false;
         SetProperty(settings, audioDeviceId, "pause", false);
     }
 
     public void Toggle(AppSettings settings, string audioDeviceId)
     {
-        EnsureMpv(settings, audioDeviceId);
-        SendIpcRequest(settings, new object[] { "cycle", "pause" });
+        var status = TryGetStatus(settings, audioDeviceId);
+        if (status?.State == PlayerState.Paused)
+        {
+            Resume(settings, audioDeviceId);
+            return;
+        }
+
+        if (status?.State == PlayerState.Playing)
+        {
+            Pause(settings, audioDeviceId);
+        }
     }
 
     public void Skip(AppSettings settings, string audioDeviceId)
     {
-        SuppressAutoResume(TimeSpan.FromSeconds(5), "skip command");
+        _blockUnexpectedIdle = true;
+        SuppressAutoResume(TimeSpan.FromSeconds(30), "skip command");
         EnsureMpv(settings, audioDeviceId);
         SendIpcRequest(settings, new object[] { "playlist-next", "force" });
     }
@@ -186,6 +209,14 @@ internal sealed class MpvController : IMpvPlayback, IDisposable
         }
     }
 
+    public void InvokeExclusive(Action action)
+    {
+        lock (_operationGate)
+        {
+            action();
+        }
+    }
+
     public bool IsPlayerRunning(AppSettings settings)
     {
         return TryConnect(settings);
@@ -246,6 +277,9 @@ internal sealed class MpvController : IMpvPlayback, IDisposable
             || currentStatus is null
             || previousStatus.State is not (PlayerState.Playing or PlayerState.Paused)
             || currentStatus.State != PlayerState.Idle
+            || currentStatus.PlaylistCount is null or > 0
+            || _intentionalPause
+            || _blockUnexpectedIdle
             || DateTime.UtcNow < _suppressAutoResumeUntilUtc)
         {
             return false;
@@ -287,15 +321,14 @@ internal sealed class MpvController : IMpvPlayback, IDisposable
             _lastAutoResumeAttemptUtc = now;
             _autoResumeInFlight = true;
             _log($"Attempting failsafe resume at {resumePosition.Value:0.0}s for {resumeUrl} (attempt {_autoResumeAttempts}).");
+            _pendingResumePositionSeconds = resumePosition;
             LoadUrl(settings, resumeUrl, enqueue: false, audioDeviceId, isAutoResume: true);
-            Thread.Sleep(250);
-            SendIpcRequest(settings, new object[] { "seek", resumePosition.Value, "absolute+exact" });
-            SendIpcRequest(settings, new object[] { "set_property", "pause", false });
             return true;
         }
         catch (Exception ex)
         {
             _autoResumeInFlight = false;
+            _pendingResumePositionSeconds = null;
             _log($"Failsafe resume attempt failed: {ex.Message}");
             return false;
         }
@@ -313,6 +346,7 @@ internal sealed class MpvController : IMpvPlayback, IDisposable
         bool? pause = null;
         string? path = null;
         bool? coreIdle = null;
+        bool? idleActive = null;
 
         AddProperty("pause", () => pause = GetProperty<bool?>(settings, "pause", ensureStarted: false));
         AddProperty("media-title", () => GetProperty<string?>(settings, "media-title", ensureStarted: false));
@@ -322,24 +356,20 @@ internal sealed class MpvController : IMpvPlayback, IDisposable
         AddProperty("playlist-pos", () => GetProperty<int?>(settings, "playlist-pos", ensureStarted: false));
         AddProperty("playlist-count", () => GetProperty<int?>(settings, "playlist-count", ensureStarted: false));
         AddProperty("core-idle", () => coreIdle = GetProperty<bool?>(settings, "core-idle", ensureStarted: false));
+        try
+        {
+            idleActive = GetProperty<bool?>(settings, "idle-active", ensureStarted: false);
+            props["idle-active"] = idleActive;
+        }
+        catch
+        {
+            props["idle-active"] = null;
+        }
+
         AddProperty("volume", () => GetProperty<double?>(settings, "volume", ensureStarted: false));
         AddProperty("mute", () => GetProperty<bool?>(settings, "mute", ensureStarted: false));
 
-        var playerState = "unknown";
-        if (coreIdle == true)
-        {
-            playerState = "idle";
-        }
-        else if (!string.IsNullOrWhiteSpace(path))
-        {
-            playerState = pause == true
-                ? "paused"
-                : _playbackStartedSinceLoad ? "playing" : "loading";
-        }
-        else if (!_playbackStartedSinceLoad)
-        {
-            playerState = "loading";
-        }
+        var playerState = ToApiState(ClassifyState(pause, coreIdle, idleActive, path));
 
         return new ApiStatusSnapshot(props, errors, playerState);
 
@@ -355,6 +385,53 @@ internal sealed class MpvController : IMpvPlayback, IDisposable
                 errors.Add($"{propertyName}: {ex.Message}");
             }
         }
+    }
+
+    private PlayerState ClassifyState(bool? pause, bool? coreIdle, bool? idleActive, string? path)
+    {
+        // idle-active is authoritative. A stale path can still be reported after mpv has
+        // unloaded the file, and treating that path as loaded hides a real idle drop.
+        if (idleActive == true)
+        {
+            return PlayerState.Idle;
+        }
+
+        var loaded = !string.IsNullOrWhiteSpace(path);
+        if (loaded)
+        {
+            if (pause == true)
+            {
+                return PlayerState.Paused;
+            }
+
+            return _playbackStartedSinceLoad ? PlayerState.Playing : PlayerState.Loading;
+        }
+
+        // core-idle is also true while mpv restarts, seeks, or waits on cache. idle-active
+        // is the signal that no file is loaded. A false value means the core is busy.
+        if (!_playbackStartedSinceLoad || idleActive == false)
+        {
+            return PlayerState.Loading;
+        }
+
+        if (idleActive == true || coreIdle == true)
+        {
+            return PlayerState.Idle;
+        }
+
+        return PlayerState.Unknown;
+    }
+
+    private static string ToApiState(PlayerState state)
+    {
+        return state switch
+        {
+            PlayerState.Playing => "playing",
+            PlayerState.Paused => "paused",
+            PlayerState.Loading => "loading",
+            PlayerState.Idle => "idle",
+            _ => "unknown",
+        };
     }
 
     public (double? Volume, bool? Mute) GetVolumeSnapshot(AppSettings settings, string audioDeviceId)
@@ -386,24 +463,20 @@ internal sealed class MpvController : IMpvPlayback, IDisposable
             var playlistPos = GetProperty<int?>(settings, "playlist-pos", ensureStarted: false);
             var playlistCount = GetProperty<int?>(settings, "playlist-count", ensureStarted: false);
             var coreIdle = GetProperty<bool?>(settings, "core-idle", ensureStarted: false);
+            bool? idleActive = null;
+            try
+            {
+                idleActive = GetProperty<bool?>(settings, "idle-active", ensureStarted: false);
+            }
+            catch
+            {
+                idleActive = null;
+            }
+
             var volume = GetProperty<double?>(settings, "volume", ensureStarted: false);
             var mute = GetProperty<bool?>(settings, "mute", ensureStarted: false);
 
-            var state = PlayerState.Unknown;
-            if (coreIdle == true)
-            {
-                state = PlayerState.Idle;
-            }
-            else if (!string.IsNullOrWhiteSpace(path))
-            {
-                state = pause == true
-                    ? PlayerState.Paused
-                    : _playbackStartedSinceLoad ? PlayerState.Playing : PlayerState.Loading;
-            }
-            else if (!_playbackStartedSinceLoad)
-            {
-                state = PlayerState.Loading;
-            }
+            var state = ClassifyState(pause, coreIdle, idleActive, path);
 
             return new PlayerStatus(
                 state,
@@ -475,6 +548,8 @@ internal sealed class MpvController : IMpvPlayback, IDisposable
             _playbackStartedSinceLoad = false;
             _lastPlaybackError = null;
             _forcedAudioDeviceFailure = false;
+            _intentionalPause = false;
+            _blockUnexpectedIdle = false;
             if (!isAutoResume)
             {
                 _autoResumeAttempts = 0;
@@ -486,8 +561,36 @@ internal sealed class MpvController : IMpvPlayback, IDisposable
         }
 
         EnsureMpv(settings, audioDeviceId);
-        var mode = enqueue ? "append-play" : "replace";
-        SendIpcRequest(settings, new object[] { "loadfile", url, mode });
+        try
+        {
+            if (isAutoResume && _pendingResumePositionSeconds is double startAt)
+            {
+                SendIpcRequest(
+                    settings,
+                    new object[]
+                    {
+                        "loadfile",
+                        url,
+                        enqueue ? "append-play" : "replace",
+                        -1,
+                        new Dictionary<string, string>
+                        {
+                            ["start"] = startAt.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture),
+                        },
+                    });
+                return;
+            }
+
+            var mode = enqueue ? "append-play" : "replace";
+            SendIpcRequest(settings, new object[] { "loadfile", url, mode });
+        }
+        finally
+        {
+            if (isAutoResume)
+            {
+                _pendingResumePositionSeconds = null;
+            }
+        }
     }
 
     private void EnsureMpv(AppSettings settings, string audioDeviceId)
@@ -503,14 +606,20 @@ internal sealed class MpvController : IMpvPlayback, IDisposable
 
             if (_mpvProcess is { HasExited: false } && TryConnect(settings))
             {
+                EnsureEventMonitor(settings);
                 return;
             }
 
-            if (_mpvProcess is null && TryConnect(settings))
+            if (TryConnect(settings))
             {
-                _log("Found an existing mpv instance on the WinTubeRelay IPC pipe. Restarting it to apply current launch settings.");
-                TryQuitExistingPlayer(settings);
-                WaitForPipeToClose(settings, TimeSpan.FromSeconds(2));
+                AdoptExistingPlayer(settings);
+                return;
+            }
+
+            if (_mpvProcess is { HasExited: false })
+            {
+                WaitForPipe(settings, TimeSpan.FromSeconds(3));
+                return;
             }
 
             if (string.IsNullOrWhiteSpace(settings.MpvPath) || !File.Exists(settings.MpvPath))
@@ -594,6 +703,12 @@ internal sealed class MpvController : IMpvPlayback, IDisposable
             }
 
             _log($"Starting mpv with audio device {audioDeviceId}.");
+            if (TryConnect(settings))
+            {
+                AdoptExistingPlayer(settings);
+                return;
+            }
+
             StopTrackingProcess();
             _mpvProcess?.Dispose();
             _mpvProcess = Process.Start(startInfo)
@@ -607,6 +722,32 @@ internal sealed class MpvController : IMpvPlayback, IDisposable
             WaitForPipe(settings, TimeSpan.FromSeconds(3));
             StartEventMonitor(settings);
         }
+    }
+
+    private void AdoptExistingPlayer(AppSettings settings)
+    {
+        if (IsEventMonitorAlive())
+        {
+            return;
+        }
+
+        _log("Adopting existing mpv instance on the WinTubeRelay IPC pipe without restarting it.");
+        StartEventMonitor(settings);
+    }
+
+    private void EnsureEventMonitor(AppSettings settings)
+    {
+        if (IsEventMonitorAlive())
+        {
+            return;
+        }
+
+        StartEventMonitor(settings);
+    }
+
+    private bool IsEventMonitorAlive()
+    {
+        return _eventMonitorTask is { IsCompleted: false } && _eventMonitorCts is { IsCancellationRequested: false };
     }
 
     private void TryQuitExistingPlayer(AppSettings settings)
@@ -633,38 +774,101 @@ internal sealed class MpvController : IMpvPlayback, IDisposable
             EnsureMpv(settings, "auto");
         }
 
+        var requestId = Interlocked.Increment(ref _requestId);
         var payload = new Dictionary<string, object?>
         {
             ["command"] = command,
-            ["request_id"] = Interlocked.Increment(ref _requestId),
+            ["request_id"] = requestId,
         };
+        var connected = false;
+        var wrote = false;
 
         try
         {
             using var client = CreatePipeClient(settings);
             client.Connect(1500);
+            connected = true;
+            var ipcStream = IpcStreamWrapperForTests?.Invoke(client) ?? (Stream)client;
 
-            using var writer = new StreamWriter(client, new UTF8Encoding(false), 1024, leaveOpen: true)
+            using var writer = new StreamWriter(ipcStream, new UTF8Encoding(false), 1024, leaveOpen: true)
             {
                 AutoFlush = true,
             };
             using var reader = new StreamReader(client, Encoding.UTF8, true, 1024, leaveOpen: true);
 
+            // Mark the write before any bytes go out. A partial write must not look retryable.
+            wrote = true;
             writer.WriteLine(JsonSerializer.Serialize(payload));
-            var line = reader.ReadLine();
+            return ReadMatchingIpcResponseAsync(client, reader, requestId).ConfigureAwait(false).GetAwaiter().GetResult();
+        }
+        catch (Exception ex) when (allowRetry && !connected && !wrote && ex is not TimeoutException)
+        {
+            _log($"IPC request failed for {DescribeCommand(command)}, retrying once: {ex.Message}");
+            return SendIpcRequest(settings, command, ensureStarted, allowRetry: false);
+        }
+    }
+
+    private static async Task<JsonElement> ReadMatchingIpcResponseAsync(NamedPipeClientStream client, StreamReader reader, int requestId)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(1);
+        while (DateTime.UtcNow < deadline)
+        {
+            var remaining = deadline - DateTime.UtcNow;
+            if (remaining < TimeSpan.FromMilliseconds(50))
+            {
+                remaining = TimeSpan.FromMilliseconds(50);
+            }
+
+            string? line;
+            try
+            {
+                line = await reader.ReadLineAsync().WaitAsync(remaining).ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                try
+                {
+                    client.Dispose();
+                }
+                catch
+                {
+                }
+
+                throw new TimeoutException("mpv IPC read timed out.");
+            }
+
             if (string.IsNullOrWhiteSpace(line))
             {
                 throw new IOException("mpv IPC returned an empty response.");
             }
 
             using var document = JsonDocument.Parse(line);
-            return document.RootElement.Clone();
+            var root = document.RootElement;
+            if (root.TryGetProperty("event", out _))
+            {
+                continue;
+            }
+
+            if (!root.TryGetProperty("request_id", out var idElement)
+                || !idElement.TryGetInt32(out var id)
+                || id != requestId)
+            {
+                continue;
+            }
+
+            if (root.TryGetProperty("error", out var errorElement))
+            {
+                var error = errorElement.ValueKind == JsonValueKind.String ? errorElement.GetString() : errorElement.ToString();
+                if (!string.Equals(error, "success", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException($"mpv IPC error: {error}");
+                }
+            }
+
+            return root.Clone();
         }
-        catch (Exception ex) when (allowRetry)
-        {
-            _log($"IPC request failed for {DescribeCommand(command)}, retrying once: {ex.Message}");
-            return SendIpcRequest(settings, command, ensureStarted, allowRetry: false);
-        }
+
+        throw new TimeoutException("mpv IPC read timed out.");
     }
 
     private bool TryConnect(AppSettings settings)
@@ -730,7 +934,7 @@ internal sealed class MpvController : IMpvPlayback, IDisposable
             ".",
             NormalizePipeName(settings.MpvPipeName),
             PipeDirection.InOut,
-            PipeOptions.None);
+            PipeOptions.Asynchronous);
     }
 
     private void StartEventMonitor(AppSettings settings)
@@ -766,47 +970,93 @@ internal sealed class MpvController : IMpvPlayback, IDisposable
 
     private async Task MonitorEventsAsync(AppSettings settings, CancellationToken cancellationToken)
     {
-        try
+        var attempt = 0;
+        while (!cancellationToken.IsCancellationRequested)
         {
-            using var client = CreatePipeClient(settings);
-            await client.ConnectAsync(1500, cancellationToken);
-            using var writer = new StreamWriter(client, new UTF8Encoding(false), 1024, leaveOpen: true)
+            if (TrackedProcessHasExited())
             {
-                AutoFlush = true,
-            };
-            using var reader = new StreamReader(client, Encoding.UTF8, true, 1024, leaveOpen: true);
+                break;
+            }
 
-            await SendMonitorCommandAsync(writer, new object[] { "request_log_messages", "warn" }, cancellationToken);
-            await SendMonitorCommandAsync(writer, new object[] { "observe_property", 1, "media-title" }, cancellationToken);
-            await SendMonitorCommandAsync(writer, new object[] { "observe_property", 2, "path" }, cancellationToken);
-            await SendMonitorCommandAsync(writer, new object[] { "observe_property", 3, "pause" }, cancellationToken);
-
-            while (!cancellationToken.IsCancellationRequested)
+            try
             {
-                var line = await reader.ReadLineAsync(cancellationToken);
-                if (string.IsNullOrWhiteSpace(line))
+                await MonitorEventsOnceAsync(settings, cancellationToken).ConfigureAwait(false);
+                attempt = 0;
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            catch (Exception ex)
+            {
+                if (cancellationToken.IsCancellationRequested)
                 {
-                    if (!cancellationToken.IsCancellationRequested)
-                    {
-                        _log("mpv event monitor disconnected from IPC.");
-                    }
-
                     break;
                 }
 
-                using var document = JsonDocument.Parse(line);
-                HandleMonitorMessage(document.RootElement);
-            }
-        }
-        catch (OperationCanceledException)
-        {
-        }
-        catch (Exception ex)
-        {
-            if (!cancellationToken.IsCancellationRequested)
-            {
                 _log($"mpv event monitor failed: {ex.Message}");
+                attempt++;
             }
+
+            if (cancellationToken.IsCancellationRequested || TrackedProcessHasExited())
+            {
+                break;
+            }
+
+            var delayMs = Math.Min(2000, 200 * (1 << Math.Min(attempt, 4)));
+            try
+            {
+                await Task.Delay(delayMs, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+        }
+    }
+
+    private bool TrackedProcessHasExited()
+    {
+        try
+        {
+            return _mpvProcess is { HasExited: true };
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private async Task MonitorEventsOnceAsync(AppSettings settings, CancellationToken cancellationToken)
+    {
+        using var client = CreatePipeClient(settings);
+        await client.ConnectAsync(1500, cancellationToken);
+        using var writer = new StreamWriter(client, new UTF8Encoding(false), 1024, leaveOpen: true)
+        {
+            AutoFlush = true,
+        };
+        using var reader = new StreamReader(client, Encoding.UTF8, true, 1024, leaveOpen: true);
+
+        await SendMonitorCommandAsync(writer, new object[] { "request_log_messages", "warn" }, cancellationToken);
+        await SendMonitorCommandAsync(writer, new object[] { "observe_property", 1, "media-title" }, cancellationToken);
+        await SendMonitorCommandAsync(writer, new object[] { "observe_property", 2, "path" }, cancellationToken);
+        await SendMonitorCommandAsync(writer, new object[] { "observe_property", 3, "pause" }, cancellationToken);
+
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            var line = await reader.ReadLineAsync(cancellationToken);
+            if (string.IsNullOrWhiteSpace(line))
+            {
+                if (!cancellationToken.IsCancellationRequested)
+                {
+                    _log("mpv event monitor disconnected from IPC. Reconnecting.");
+                }
+
+                return;
+            }
+
+            using var document = JsonDocument.Parse(line);
+            HandleMonitorMessage(document.RootElement);
         }
     }
 
@@ -840,9 +1090,22 @@ internal sealed class MpvController : IMpvPlayback, IDisposable
             case "playback-restart":
                 _playbackStartedSinceLoad = true;
                 _lastPlaybackError = null;
+                if (!_intentionalPause)
+                {
+                    _blockUnexpectedIdle = false;
+                }
+
                 _log($"mpv event: playback-restart ({DescribeCurrentTrack()})");
                 break;
             case "end-file":
+                var reason = ReadOptionalString(message, "reason");
+                if (reason is not null
+                    && reason is not "error")
+                {
+                    _blockUnexpectedIdle = true;
+                    SuppressAutoResume(TimeSpan.FromSeconds(30), $"end-file {reason}");
+                }
+
                 LogEndFileEvent(message);
                 break;
             case "log-message":

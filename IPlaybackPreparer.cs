@@ -30,6 +30,19 @@ internal static class DisplayOutputClassifier
     }
 }
 
+internal static class TogglePreparation
+{
+    public static bool NeedsWake(ApiStatusSnapshot snapshot)
+    {
+        if (string.Equals(snapshot.PlayerState, "paused", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return snapshot.Properties.TryGetValue("pause", out var pause) && pause is true;
+    }
+}
+
 internal sealed class DisplayPlaybackCoordinator : IPlaybackPreparer
 {
     private static readonly TimeSpan DefaultWaitTimeout = TimeSpan.FromSeconds(6);
@@ -108,8 +121,23 @@ internal sealed class DisplayPlaybackCoordinator : IPlaybackPreparer
             && (!string.IsNullOrWhiteSpace(selectedId) || !string.IsNullOrWhiteSpace(selectedName));
         if (selectedWasMissing && _player.IsPlayerRunning(_settings))
         {
-            _log?.Invoke($"Reinitializing audio output '{deviceId}' before {intent}.");
-            _player.TryApplyAudioOutput(_settings, deviceId, forceReinitialize: true);
+            var applied = false;
+            for (var attempt = 0; attempt < 3 && !applied; attempt++)
+            {
+                if (attempt > 0)
+                {
+                    _sleep(_pollInterval);
+                }
+
+                _log?.Invoke($"Reinitializing audio output '{deviceId}' before {intent} (attempt {attempt + 1}).");
+                applied = _player.TryApplyAudioOutput(_settings, deviceId, forceReinitialize: true);
+            }
+
+            if (!applied)
+            {
+                _onStillUnavailable?.Invoke();
+                throw new InvalidOperationException($"Could not reinitialize audio output '{deviceId}'.");
+            }
         }
 
         if (resolved is null && selectedWasMissing)

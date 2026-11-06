@@ -28,6 +28,8 @@ internal interface IMpvPlayback
 
     bool QuitPlayer(AppSettings settings);
 
+    void InvokeExclusive(Action action);
+
     ApiStatusSnapshot GetApiStatusSnapshot(AppSettings settings, string audioDeviceId);
 
     (double? Volume, bool? Mute) GetVolumeSnapshot(AppSettings settings, string audioDeviceId);

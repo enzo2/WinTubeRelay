@@ -2,7 +2,13 @@ using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
+using WinTubeRelay.PlaybackTests;
 using WinTubeRelay.Tray;
+
+if (FakeMpvProcess.ShouldRun(args))
+{
+    return FakeMpvProcess.Run(args);
+}
 
 return await PlaybackRecoveryHarness.RunAsync(args);
 
@@ -25,6 +31,46 @@ internal static class PlaybackRecoveryHarness
             ("healthy_display_does_not_force_reinit", HealthyDisplayDoesNotForceReinit),
             ("non_display_output_does_not_wake", NonDisplayOutputDoesNotWake),
             ("rejection_does_not_wake_or_touch_player", RejectionDoesNotWakeOrTouchPlayer),
+            ("paused_loaded_track_is_not_idle_when_core_idle", MpvLifecycleTests.PausedLoadedTrackIsNotIdleWhenCoreIdle),
+            ("buffering_core_idle_is_not_idle", MpvLifecycleTests.BufferingCoreIdleIsNotIdle),
+            ("reinit_core_idle_without_idle_active_is_not_idle", MpvLifecycleTests.ReinitCoreIdleWithoutIdleActiveIsNotIdle),
+            ("true_idle_when_idle_active", MpvLifecycleTests.TrueIdleWhenIdleActive),
+            ("ipc_reply_skips_events_and_foreign_request_ids", MpvLifecycleTests.IpcReplySkipsEventsAndForeignRequestIds),
+            ("ipc_error_response_is_not_success", MpvLifecycleTests.IpcErrorResponseIsNotSuccess),
+            ("existing_pipe_is_adopted_without_restart", MpvLifecycleTests.ExistingPipeIsAdoptedWithoutRestartOrDuplicateLaunch),
+            ("mutating_ipc_command_is_not_retried_after_write", MpvLifecycleTests.MutatingIpcCommandIsNotRetriedAfterWrite),
+            ("ipc_read_has_deadline", MpvLifecycleTests.IpcReadHasDeadline),
+            ("failsafe_does_not_replace_remaining_queue", MpvLifecycleTests.FailsafeDoesNotReplaceRemainingQueue),
+            ("failsafe_does_not_seek_before_load_ready", MpvLifecycleTests.FailsafeDoesNotSeekBeforeLoadReady),
+            ("pause_suppresses_failsafe_when_status_blips_idle", MpvLifecycleTests.PauseSuppressesFailsafeWhenStatusBlipsIdle),
+            ("corrupt_settings_load_uses_backup", LifecycleSupportTests.CorruptSettingsLoadUsesBackup),
+            ("second_process_does_not_acquire_instance_mutex", LifecycleSupportTests.SecondProcessDoesNotAcquireInstanceMutex),
+            ("wake_lock_survives_idle_status_during_preparation", LifecycleSupportTests.WakeLockSurvivesIdleStatusDuringPreparation),
+            ("queued_recovery_keeps_later_wake", LifecycleSupportTests.QueuedRecoveryKeepsLaterWake),
+            ("web_ui_can_send_configured_api_key", LifecycleSupportTests.WebUiCanSendConfiguredApiKey),
+            ("web_ui_get_headers_executes", ReviewRegressionTests.WebUiGetHeadersExecutes),
+            ("exclusive_prepare_does_not_deadlock_ui_command", ReviewRegressionTests.ExclusivePrepareDoesNotDeadlockUiCommand),
+            ("exclusive_actions_do_not_interleave", ReviewRegressionTests.ExclusiveActionsDoNotInterleave),
+            ("favorite_and_recent_updates_share_settings_lock", ReviewRegressionTests.FavoriteAndRecentUpdatesShareSettingsLock),
+            ("monitor_reconnects_after_one_failed_connect", ReviewRegressionTests.MonitorReconnectsAfterOneFailedConnect),
+            ("mutating_ipc_is_not_retried_when_write_throws", ReviewRegressionTests.MutatingIpcIsNotRetriedWhenWriteThrows),
+            ("idle_active_wins_over_stale_path", ReviewRegressionTests.IdleActiveWinsOverStalePath),
+            ("toggle_pause_suppresses_failsafe", ReviewRegressionTests.TogglePauseSuppressesFailsafe),
+            ("toggle_known_paused_resumes", ReviewRegressionTests.ToggleKnownPausedResumes),
+            ("pending_resume_cleared_after_load_send", ReviewRegressionTests.PendingResumeClearedAfterLoadSend),
+            ("pending_resume_cleared_after_load_failure", ReviewRegressionTests.PendingResumeClearedAfterLoadFailure),
+            ("null_playlist_count_suppresses_failsafe", ReviewRegressionTests.NullPlaylistCountSuppressesFailsafe),
+            ("abandoned_mutex_is_acquired_and_released", ReviewRegressionTests.AbandonedMutexIsAcquiredAndReleased),
+            ("late_wake_survives_consume_complete_gap", ReviewRegressionTests.LateWakeSurvivesConsumeCompleteGap),
+            ("toggle_paused_wakes_before_unpause", TogglePausedWakesBeforeUnpause),
+            ("reinit_failure_does_not_start_playback", ReinitFailureDoesNotStartPlayback),
+            ("web_server_start_does_not_deadlock_on_caller_context", WebLifecycleRegressionTests.WebServerStartDoesNotDeadlockOnCallerContext),
+            ("web_server_stop_does_not_deadlock_on_caller_context", WebLifecycleRegressionTests.WebServerStopDoesNotDeadlockOnCallerContext),
+            ("web_lifecycle_shutdown_idle_releases_port", WebLifecycleRegressionTests.ShutdownIdleReleasesPortAndDisposesOnce),
+            ("web_lifecycle_shutdown_survives_inflight_ui_marshal", WebLifecycleRegressionTests.ShutdownSurvivesInflightUiMarshal),
+            ("web_lifecycle_restart_binds_new_port_after_inflight", WebLifecycleRegressionTests.RestartBindsNewPortAfterInflightRequest),
+            ("web_lifecycle_duplicate_shutdown_disposes_once", WebLifecycleRegressionTests.DuplicateShutdownDisposesOnce),
+            ("web_lifecycle_shutdown_logs_dispose_errors", WebLifecycleRegressionTests.ShutdownLogsDisposeErrors),
         };
 
         var ran = 0;
@@ -198,6 +244,40 @@ internal static class PlaybackRecoveryHarness
             (session.Player.ResumeCount == 0, $"resumeCount={session.Player.ResumeCount}"),
             (session.Player.ReinitCount == 0, $"reinitCount={session.Player.ReinitCount}"),
             (session.Player.QuitCount == 0 && session.Player.StopCount == 0, $"quit={session.Player.QuitCount} stop={session.Player.StopCount}"));
+    }
+
+    private static async Task TogglePausedWakesBeforeUnpause()
+    {
+        await using var session = await IncidentSession.StartAsync(new SessionOptions
+        {
+            ReturnDeviceAfterWake = true,
+            PlayerRunning = true,
+        });
+        session.Player.SnapshotState = "paused";
+        using var response = await session.CreateClient().PostAsync("/toggle", new StringContent("{}", Encoding.UTF8, "application/json"));
+        var text = await response.Content.ReadAsStringAsync();
+        ExpectAll(
+            (response.StatusCode == HttpStatusCode.OK, $"HTTP {(int)response.StatusCode}: {text}"),
+            (session.WakeCalls == 1, $"wakeCalls={session.WakeCalls}"),
+            (session.Player.ToggleCount == 1, $"toggle={session.Player.ToggleCount}"),
+            (session.Player.ReinitCount == 1, $"reinitCount={session.Player.ReinitCount}"));
+    }
+
+    private static async Task ReinitFailureDoesNotStartPlayback()
+    {
+        await using var session = await IncidentSession.StartAsync(new SessionOptions
+        {
+            ReturnDeviceAfterWake = true,
+            PlayerRunning = true,
+        });
+        session.Player.FailReinit = true;
+        using var response = await session.PostPlayAsync(enqueue: false);
+        var text = await response.Content.ReadAsStringAsync();
+        ExpectAll(
+            (response.StatusCode == HttpStatusCode.InternalServerError, $"HTTP {(int)response.StatusCode}: {text}"),
+            (session.Player.PlayCount == 0, $"play={session.Player.PlayCount}"),
+            (session.Player.ReinitCount >= 2, $"reinitCount={session.Player.ReinitCount}"),
+            (session.UnavailableCallbacks == 1, $"unavailableCallbacks={session.UnavailableCallbacks}"));
     }
 
     private static void ExpectAll(params (bool Condition, string Message)[] checks)
@@ -459,6 +539,10 @@ internal static class PlaybackRecoveryHarness
 
         public int QuitCount { get; private set; }
 
+        public int ToggleCount { get; private set; }
+
+        public string SnapshotState { get; set; } = "idle";
+
         public int StopCount { get; private set; }
 
         public Action<bool, string>? OnPlay { get; set; }
@@ -492,6 +576,7 @@ internal static class PlaybackRecoveryHarness
 
         public void Toggle(AppSettings settings, string audioDeviceId)
         {
+            ToggleCount++;
         }
 
         public void Skip(AppSettings settings, string audioDeviceId)
@@ -515,13 +600,15 @@ internal static class PlaybackRecoveryHarness
             return Running;
         }
 
+        public bool FailReinit { get; set; }
+
         public bool TryApplyAudioOutput(AppSettings settings, string audioDeviceId, bool forceReinitialize = false)
         {
             ReinitCount++;
             LastReinitForce = forceReinitialize;
             LastReinitDeviceId = audioDeviceId;
             OnReinit?.Invoke(audioDeviceId, forceReinitialize);
-            return true;
+            return !FailReinit;
         }
 
         public bool QuitPlayer(AppSettings settings)
@@ -531,9 +618,20 @@ internal static class PlaybackRecoveryHarness
             return true;
         }
 
+        public void InvokeExclusive(Action action)
+        {
+            lock (this)
+            {
+                action();
+            }
+        }
+
         public ApiStatusSnapshot GetApiStatusSnapshot(AppSettings settings, string audioDeviceId)
         {
-            return new ApiStatusSnapshot(new Dictionary<string, object?>(), new List<string>(), "idle");
+            return new ApiStatusSnapshot(
+                new Dictionary<string, object?> { ["pause"] = string.Equals(SnapshotState, "paused", StringComparison.Ordinal) },
+                new List<string>(),
+                SnapshotState);
         }
 
         public (double? Volume, bool? Mute) GetVolumeSnapshot(AppSettings settings, string audioDeviceId)

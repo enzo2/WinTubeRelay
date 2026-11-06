@@ -17,10 +17,27 @@ internal sealed class DisplaySleepBlocker
     private bool _playbackActive;
     private bool _isActive;
 
-    public DisplaySleepBlocker(Action<string> log)
+    private readonly Func<DateTime> _utcNow;
+    private DateTime _holdUntilUtc;
+
+    public DisplaySleepBlocker(Action<string> log, Func<DateTime>? utcNow = null)
     {
         _log = log;
+        _utcNow = utcNow ?? (() => DateTime.UtcNow);
     }
+
+    internal bool WakeLockHeld
+    {
+        get
+        {
+            lock (_syncRoot)
+            {
+                return _isActive;
+            }
+        }
+    }
+
+    internal static readonly TimeSpan PreparationHold = TimeSpan.FromSeconds(20);
 
     public void SetPlaybackActive(bool isPlaying)
     {
@@ -36,6 +53,7 @@ internal sealed class DisplaySleepBlocker
         lock (_syncRoot)
         {
             _playbackActive = false;
+            _holdUntilUtc = DateTime.MinValue;
             Apply();
         }
     }
@@ -45,6 +63,7 @@ internal sealed class DisplaySleepBlocker
         lock (_syncRoot)
         {
             _playbackActive = true;
+            _holdUntilUtc = _utcNow().Add(PreparationHold);
             Apply(force: true);
 
             if (!PostMessage(HwndBroadcast, WmSysCommand, (IntPtr)ScMonitorPower, MonitorPowerOn))
@@ -56,7 +75,7 @@ internal sealed class DisplaySleepBlocker
 
     private void Apply(bool force = false)
     {
-        var shouldBlock = _playbackActive;
+        var shouldBlock = _playbackActive || _utcNow() < _holdUntilUtc;
         if (!force && shouldBlock == _isActive)
         {
             return;

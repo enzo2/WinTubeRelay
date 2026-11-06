@@ -15,6 +15,7 @@ internal sealed class WebServerService : IAsyncDisposable
     private readonly Action _saveSettings;
     private readonly Action<string> _log;
     private readonly IPlaybackPreparer? _preparePlayback;
+    private readonly SettingsStore? _settingsStore;
     private WebApplication? _app;
 
     public WebServerService(
@@ -23,7 +24,8 @@ internal sealed class WebServerService : IAsyncDisposable
         IMpvPlayback mpvController,
         Action saveSettings,
         Action<string> log,
-        IPlaybackPreparer? preparePlayback = null)
+        IPlaybackPreparer? preparePlayback = null,
+        SettingsStore? settingsStore = null)
     {
         _getSettings = getSettings;
         _getCurrentAudioDeviceId = getCurrentAudioDeviceId;
@@ -31,6 +33,7 @@ internal sealed class WebServerService : IAsyncDisposable
         _saveSettings = saveSettings;
         _log = log;
         _preparePlayback = preparePlayback;
+        _settingsStore = settingsStore;
     }
 
     public async Task StartAsync(CancellationToken cancellationToken = default)
@@ -46,15 +49,15 @@ internal sealed class WebServerService : IAsyncDisposable
 
         var app = builder.Build();
         ConfigurePipeline(app);
-        await app.StartAsync(cancellationToken);
+        await RunWithoutCapturedContext(() => app.StartAsync(cancellationToken)).ConfigureAwait(false);
         _app = app;
         _log($"Web UI/API listening on port {settings.ApiPort}.");
     }
 
     public async Task RestartAsync(CancellationToken cancellationToken = default)
     {
-        await StopAsync(cancellationToken);
-        await StartAsync(cancellationToken);
+        await StopAsync(cancellationToken).ConfigureAwait(false);
+        await StartAsync(cancellationToken).ConfigureAwait(false);
     }
 
     public async Task StopAsync(CancellationToken cancellationToken = default)
@@ -64,14 +67,33 @@ internal sealed class WebServerService : IAsyncDisposable
             return;
         }
 
-        await _app.StopAsync(cancellationToken);
-        await _app.DisposeAsync();
+        await RunWithoutCapturedContext(() => _app.StopAsync(cancellationToken)).ConfigureAwait(false);
+        await RunWithoutCapturedContext(() => _app.DisposeAsync().AsTask()).ConfigureAwait(false);
         _app = null;
     }
 
     public async ValueTask DisposeAsync()
     {
-        await StopAsync();
+        await StopAsync().ConfigureAwait(false);
+    }
+
+    private static Task RunWithoutCapturedContext(Func<Task> start)
+    {
+        var previous = SynchronizationContext.Current;
+        if (previous is null)
+        {
+            return start();
+        }
+
+        SynchronizationContext.SetSynchronizationContext(null);
+        try
+        {
+            return start();
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previous);
+        }
     }
 
     private void ConfigurePipeline(WebApplication app)
@@ -110,8 +132,11 @@ internal sealed class WebServerService : IAsyncDisposable
 
             try
             {
-                var prepared = PrepareAudioDevice(request.Enqueue ? PlaybackIntent.Enqueue : PlaybackIntent.Play);
-                _mpvController.Play(settings, request.Url, request.Enqueue, prepared);
+                _mpvController.InvokeExclusive(() =>
+                {
+                    var prepared = PrepareAudioDevice(request.Enqueue ? PlaybackIntent.Enqueue : PlaybackIntent.Play);
+                    _mpvController.Play(settings, request.Url, request.Enqueue, prepared);
+                });
                 return Results.Json(new { ok = true, url = request.Url, enqueue = request.Enqueue, mpv = (object?)null });
             }
             catch (Exception ex)
@@ -135,14 +160,24 @@ internal sealed class WebServerService : IAsyncDisposable
 
         app.MapPost("/resume", (HttpContext context) => Execute(context, settings =>
         {
-            var prepared = PrepareAudioDevice(PlaybackIntent.Resume);
-            _mpvController.Resume(settings, prepared);
+            _mpvController.InvokeExclusive(() =>
+            {
+                var prepared = PrepareAudioDevice(PlaybackIntent.Resume);
+                _mpvController.Resume(settings, prepared);
+            });
             return Results.Json(new { ok = true, mpv = (object?)null });
         }));
 
         app.MapPost("/toggle", (HttpContext context) => Execute(context, settings =>
         {
-            _mpvController.Toggle(settings, _getCurrentAudioDeviceId());
+            _mpvController.InvokeExclusive(() =>
+            {
+                var snapshot = _mpvController.GetApiStatusSnapshot(settings, _getCurrentAudioDeviceId());
+                var deviceId = TogglePreparation.NeedsWake(snapshot)
+                    ? PrepareAudioDevice(PlaybackIntent.Resume)
+                    : _getCurrentAudioDeviceId();
+                _mpvController.Toggle(settings, deviceId);
+            });
             return Results.Json(new { ok = true, mpv = (object?)null });
         }));
 
@@ -207,7 +242,7 @@ internal sealed class WebServerService : IAsyncDisposable
             return Results.Json(new
             {
                 ok = true,
-                items = settings.Favorites
+                items = FavoritesOf(settings)
                     .OrderBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase)
                     .Select(item => new
                     {
@@ -228,39 +263,37 @@ internal sealed class WebServerService : IAsyncDisposable
             var name = string.IsNullOrWhiteSpace(request.Name)
                 ? BuildFriendlyName(request.Url)
                 : request.Name.Trim();
-            var existing = settings.Favorites.FirstOrDefault(item =>
-                string.Equals(item.Url, request.Url, StringComparison.OrdinalIgnoreCase));
-
-            if (existing is null)
+            Mutate(settings, current =>
             {
-                settings.Favorites.Add(new SavedUrlEntry
+                var existing = current.Favorites.FirstOrDefault(item =>
+                    string.Equals(item.Url, request.Url, StringComparison.OrdinalIgnoreCase));
+                if (existing is null)
                 {
-                    Name = name,
-                    Url = request.Url,
-                    LastPlayedAtUtc = DateTime.UtcNow,
-                });
-            }
-            else
-            {
-                existing.Name = name;
-                existing.LastPlayedAtUtc = DateTime.UtcNow;
-            }
-
-            _saveSettings();
+                    current.Favorites.Add(new SavedUrlEntry
+                    {
+                        Name = name,
+                        Url = request.Url,
+                        LastPlayedAtUtc = DateTime.UtcNow,
+                    });
+                }
+                else
+                {
+                    existing.Name = name;
+                    existing.LastPlayedAtUtc = DateTime.UtcNow;
+                }
+            });
             return Results.Json(new { ok = true, name, url = request.Url });
         }));
 
         app.MapPost("/favorites/remove", (HttpContext context, UrlOnlyRequest request) => Execute(context, settings =>
         {
-            settings.Favorites.RemoveAll(item => string.Equals(item.Url, request.Url, StringComparison.OrdinalIgnoreCase));
-            _saveSettings();
+            Mutate(settings, current => current.Favorites.RemoveAll(item => string.Equals(item.Url, request.Url, StringComparison.OrdinalIgnoreCase)));
             return Results.Json(new { ok = true });
         }));
 
         app.MapPost("/favorites/clear", (HttpContext context) => Execute(context, settings =>
         {
-            settings.Favorites.Clear();
-            _saveSettings();
+            Mutate(settings, current => current.Favorites.Clear());
             return Results.Json(new { ok = true });
         }));
 
@@ -269,7 +302,7 @@ internal sealed class WebServerService : IAsyncDisposable
             return Results.Json(new
             {
                 ok = true,
-                items = settings.RecentUrls
+                items = RecentOf(settings)
                     .OrderByDescending(item => item.LastPlayedAtUtc)
                     .Take(MaxRecentHistory)
                     .Select(item => new
@@ -283,10 +316,31 @@ internal sealed class WebServerService : IAsyncDisposable
 
         app.MapPost("/recent/clear", (HttpContext context) => Execute(context, settings =>
         {
-            settings.RecentUrls.Clear();
-            _saveSettings();
+            Mutate(settings, current => current.RecentUrls.Clear());
             return Results.Json(new { ok = true });
         }));
+    }
+
+    private void Mutate(AppSettings settings, Action<AppSettings> mutate)
+    {
+        if (_settingsStore is not null)
+        {
+            _settingsStore.Update(settings, mutate);
+            return;
+        }
+
+        mutate(settings);
+        _saveSettings();
+    }
+
+    private IReadOnlyList<SavedUrlEntry> FavoritesOf(AppSettings settings)
+    {
+        return _settingsStore?.CopyFavorites(settings) ?? settings.Favorites.ToList();
+    }
+
+    private IReadOnlyList<SavedUrlEntry> RecentOf(AppSettings settings)
+    {
+        return _settingsStore?.CopyRecent(settings) ?? settings.RecentUrls.ToList();
     }
 
     private string PrepareAudioDevice(PlaybackIntent intent)

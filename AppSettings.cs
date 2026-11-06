@@ -27,4 +27,6 @@ internal sealed class AppSettings
     public List<SavedUrlEntry> Favorites { get; set; } = [];
 
     public List<SavedUrlEntry> RecentUrls { get; set; } = [];
+
+    internal object SyncRoot { get; } = new();
 }

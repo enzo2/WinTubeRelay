@@ -26,7 +26,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private readonly ToolStripMenuItem _settingsPathItem;
     private readonly System.Windows.Forms.Timer _statusTimer;
     private readonly System.Windows.Forms.Timer _outputRecoveryTimer;
+    private readonly RecoveryWakeCoalescer _recoveryWake = new();
     private readonly SynchronizationContext _uiContext;
+    private readonly TrayWebLifecycle _webLifecycle = new();
     private PlayerStatus? _lastObservedStatus;
     private string _currentAudioDeviceId = "auto";
     private string? _lastPlaybackErrorShown;
@@ -35,9 +37,9 @@ internal sealed class TrayApplicationContext : ApplicationContext
     private bool _audioOutputsMenuDirty;
     private bool _statusUpdateInProgress;
     private bool _isExiting;
+    private int _shellDisposed;
     private int _selectedOutputUnavailable;
     private int _outputRecoveryAttemptsRemaining;
-    private int _outputRecoveryQueued;
     private const int MaxRecentHistory = 10;
     private const int OutputRecoveryAttemptCount = 6;
 
@@ -75,7 +77,8 @@ internal sealed class TrayApplicationContext : ApplicationContext
             _mpvController,
             SaveSettings,
             Log,
-            _playbackPreparer);
+            _playbackPreparer,
+            _settingsStore);
         _brandIcon = Branding.CreateTrayIcon();
 
         _statusItem = new ToolStripMenuItem("Status: starting...")
@@ -166,35 +169,99 @@ internal sealed class TrayApplicationContext : ApplicationContext
             Interval = 2000,
             Enabled = true,
         };
-        _statusTimer.Tick += (_, _) => UpdateStatus();
+        _statusTimer.Tick += (_, _) =>
+        {
+            if (_isExiting || ShellDisposed)
+            {
+                return;
+            }
+
+            UpdateStatus();
+        };
         _statusTimer.Start();
     }
 
-    protected override void ExitThreadCore()
+    protected override async void ExitThreadCore()
     {
         _isExiting = true;
+        try
+        {
+            DetachShutdownSources();
+            if (!await _webLifecycle.ShutdownAsync(_webServerService, DisposeShell, Log))
+            {
+                return;
+            }
+
+            base.ExitThreadCore();
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                Log(ex.ToString());
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                DisposeShell();
+            }
+            catch (Exception disposeEx)
+            {
+                try
+                {
+                    Log(disposeEx.ToString());
+                }
+                catch
+                {
+                }
+            }
+
+            try
+            {
+                base.ExitThreadCore();
+            }
+            catch
+            {
+            }
+        }
+    }
+
+    private void DetachShutdownSources()
+    {
         SystemEvents.PowerModeChanged -= OnPowerModeChanged;
         _audioDeviceService.OutputDevicesChanged -= OnAudioOutputsChanged;
         _statusTimer.Stop();
-        _statusTimer.Dispose();
         _outputRecoveryTimer.Stop();
+    }
+
+    private void DisposeShell()
+    {
+        if (Interlocked.Exchange(ref _shellDisposed, 1) != 0)
+        {
+            return;
+        }
+
+        _statusTimer.Dispose();
         _outputRecoveryTimer.Dispose();
         _notifyIcon.Visible = false;
         _notifyIcon.Dispose();
         _brandIcon.Dispose();
         _displaySleepBlocker.Release();
-        _webServerService.DisposeAsync().AsTask().GetAwaiter().GetResult();
         _audioDeviceService.Dispose();
         _mpvController.Dispose();
-        base.ExitThreadCore();
     }
+
+    private bool ShellDisposed => Volatile.Read(ref _shellDisposed) != 0;
 
     private ToolStripMenuItem BuildPlaybackMenu()
     {
         var playbackMenu = new ToolStripMenuItem("Playback");
         playbackMenu.DropDownItems.Add(new ToolStripMenuItem("Pause", null, (_, _) => RunPlayerAction("Paused playback.", controller => controller.Pause(_settings, CurrentAudioDeviceId))));
         playbackMenu.DropDownItems.Add(new ToolStripMenuItem("Resume", null, (_, _) => ResumePlayback()));
-        playbackMenu.DropDownItems.Add(new ToolStripMenuItem("Toggle Pause", null, (_, _) => RunPlayerAction("Toggled playback.", controller => controller.Toggle(_settings, CurrentAudioDeviceId))));
+        playbackMenu.DropDownItems.Add(new ToolStripMenuItem("Toggle Pause", null, (_, _) => TogglePlayback()));
         playbackMenu.DropDownItems.Add(new ToolStripMenuItem("Stop", null, (_, _) => RunPlayerAction("Stopped playback.", controller => controller.Stop(_settings, CurrentAudioDeviceId))));
         playbackMenu.DropDownItems.Add(new ToolStripMenuItem("Skip", null, (_, _) => RunPlayerAction("Skipped to the next item.", controller => controller.Skip(_settings, CurrentAudioDeviceId))));
         playbackMenu.DropDownItems.Add(new ToolStripMenuItem("Quit Player", null, (_, _) => QuitPlayer()));
@@ -273,26 +340,31 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
             var hadBeenUnavailable = reapplyAudioOutput
                 && Volatile.Read(ref _selectedOutputUnavailable) == 1;
-            if (hadBeenUnavailable && _mpvController.IsPlayerRunning(_settings))
+            if (hadBeenUnavailable)
             {
-                var reapplied = _mpvController.TryApplyAudioOutput(
-                    _settings,
-                    selectedDevice.MpvAudioDeviceId,
-                    forceReinitialize: true);
-                if (reapplied)
+                var deviceId = selectedDevice.MpvAudioDeviceId;
+                var friendlyName = selectedDevice.FriendlyName;
+                Task.Run(() =>
                 {
-                    Interlocked.Exchange(ref _selectedOutputUnavailable, 0);
-                }
+                    if (!_mpvController.IsPlayerRunning(_settings))
+                    {
+                        _uiContext.Post(_ => Interlocked.Exchange(ref _selectedOutputUnavailable, 0), null);
+                        return;
+                    }
 
-                Log(reapplied
-                    ? $"Recovered saved audio output '{selectedDevice.FriendlyName}'."
-                    : $"Saved audio output '{selectedDevice.FriendlyName}' is back, but mpv is not ready to reapply it yet.");
-            }
-            else if (hadBeenUnavailable)
-            {
-                // There is nothing to repair until the next playback session. That session
-                // starts mpv with the saved endpoint, so avoid retrying an idle pipe forever.
-                Interlocked.Exchange(ref _selectedOutputUnavailable, 0);
+                    var reapplied = _mpvController.TryApplyAudioOutput(_settings, deviceId, forceReinitialize: true);
+                    _uiContext.Post(_ =>
+                    {
+                        if (reapplied)
+                        {
+                            Interlocked.Exchange(ref _selectedOutputUnavailable, 0);
+                        }
+
+                        Log(reapplied
+                            ? $"Recovered saved audio output '{friendlyName}'."
+                            : $"Saved audio output '{friendlyName}' is back, but mpv is not ready to reapply it yet.");
+                    }, null);
+                });
             }
         }
 
@@ -306,7 +378,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         _favoritesMenuItem.DropDownItems.Add(new ToolStripMenuItem("Add Clipboard To Favorites", null, (_, _) => AddClipboardToFavorites()));
         _favoritesMenuItem.DropDownItems.Add(new ToolStripSeparator());
 
-        if (_settings.Favorites.Count == 0)
+        if (_settingsStore.CopyFavorites(_settings).Count == 0)
         {
             _favoritesMenuItem.DropDownItems.Add(new ToolStripMenuItem("No favorites yet")
             {
@@ -315,7 +387,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
         else
         {
-            foreach (var favorite in _settings.Favorites.OrderBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase))
+            foreach (var favorite in _settingsStore.CopyFavorites(_settings).OrderBy(item => item.Name, StringComparer.CurrentCultureIgnoreCase))
             {
                 var favoriteItem = new ToolStripMenuItem(Shorten(favorite.Name))
                 {
@@ -334,7 +406,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
     {
         _recentMenuItem.DropDownItems.Clear();
 
-        if (_settings.RecentUrls.Count == 0)
+        var recentItems = _settingsStore.CopyRecent(_settings)
+            .OrderByDescending(item => item.LastPlayedAtUtc)
+            .Take(MaxRecentHistory)
+            .ToList();
+        if (recentItems.Count == 0)
         {
             _recentMenuItem.DropDownItems.Add(new ToolStripMenuItem("No recent URLs yet")
             {
@@ -343,9 +419,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
             return;
         }
 
-        foreach (var recent in _settings.RecentUrls
-            .OrderByDescending(item => item.LastPlayedAtUtc)
-            .Take(MaxRecentHistory))
+        foreach (var recent in recentItems)
         {
             var recentItem = new ToolStripMenuItem(Shorten(recent.Name))
             {
@@ -371,10 +445,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
             return;
         }
 
-        _settings.SelectedAudioDeviceId = device.Id;
-        _settings.SelectedAudioDeviceName = device.FriendlyName;
+        _settingsStore.Update(_settings, current =>
+        {
+            current.SelectedAudioDeviceId = device.Id;
+            current.SelectedAudioDeviceName = device.FriendlyName;
+        });
         _currentAudioDeviceId = device.MpvAudioDeviceId;
-        _settingsStore.Save(_settings);
         UpdateCurrentOutput(device);
 
         foreach (ToolStripItem dropDownItem in _audioOutputsMenuItem.DropDownItems)
@@ -385,11 +461,17 @@ internal sealed class TrayApplicationContext : ApplicationContext
             }
         }
 
-        var appliedNow = _mpvController.TryApplyAudioOutput(_settings, device.MpvAudioDeviceId);
-        ShowInfo(appliedNow
-            ? $"Audio output set to {device.FriendlyName}"
-            : $"Saved {device.FriendlyName}. It will be used the next time playback starts.");
-        UpdateStatus();
+        Task.Run(() =>
+        {
+            var appliedNow = _mpvController.TryApplyAudioOutput(_settings, device.MpvAudioDeviceId);
+            _uiContext.Post(_ =>
+            {
+                ShowInfo(appliedNow
+                    ? $"Audio output set to {device.FriendlyName}"
+                    : $"Saved {device.FriendlyName}. It will be used the next time playback starts.");
+                UpdateStatus();
+            }, null);
+        });
     }
 
     private void PlayFromPrompt(bool enqueue)
@@ -430,12 +512,15 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             try
             {
-                var prepared = _playbackPreparer.Prepare(enqueue ? PlaybackIntent.Enqueue : PlaybackIntent.Play);
+                _mpvController.InvokeExclusive(() =>
+                {
+                    var prepared = _playbackPreparer.Prepare(enqueue ? PlaybackIntent.Enqueue : PlaybackIntent.Play);
+                    _mpvController.Play(_settings, url, enqueue, prepared);
+                });
                 _uiContext.Post(_ =>
                 {
-                    RunPlayerAction(
-                        enqueue ? "Queued URL." : "Playback request sent.",
-                        controller => controller.Play(_settings, url, enqueue, prepared));
+                    ShowInfo(enqueue ? "Queued URL." : "Playback request sent.");
+                    UpdateStatus();
                 }, null);
             }
             catch (Exception ex)
@@ -455,13 +540,47 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             try
             {
-                var prepared = _playbackPreparer.Prepare(PlaybackIntent.Resume);
+                _mpvController.InvokeExclusive(() =>
+                {
+                    var prepared = _playbackPreparer.Prepare(PlaybackIntent.Resume);
+                    _mpvController.Resume(_settings, prepared);
+                });
                 _uiContext.Post(_ =>
                 {
-                    RunPlayerAction(
-                        "Resumed playback.",
-                        controller => controller.Resume(_settings, prepared));
+                    ShowInfo("Resumed playback.");
+                    UpdateStatus();
                 }, null);
+            }
+            catch (Exception ex)
+            {
+                _uiContext.Post(_ =>
+                {
+                    ShowError(ex.Message);
+                    Log(ex.ToString());
+                }, null);
+            }
+        });
+    }
+
+    private void TogglePlayback()
+    {
+        Task.Run(() =>
+        {
+            try
+            {
+                _mpvController.InvokeExclusive(() =>
+                {
+                    var snapshot = _mpvController.GetApiStatusSnapshot(_settings, CurrentAudioDeviceId);
+                    if (!TogglePreparation.NeedsWake(snapshot))
+                    {
+                        _mpvController.Toggle(_settings, CurrentAudioDeviceId);
+                        return;
+                    }
+
+                    var prepared = _playbackPreparer.Prepare(PlaybackIntent.Resume);
+                    _mpvController.Toggle(_settings, prepared);
+                });
+                _uiContext.Post(_ => ShowInfo("Toggled playback."), null);
             }
             catch (Exception ex)
             {
@@ -476,13 +595,28 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private void InvokeOnUiThread(Action action)
     {
-        if (SynchronizationContext.Current == _uiContext)
+        if (ShellDisposed)
         {
-            action();
             return;
         }
 
-        _uiContext.Send(_ => action(), null);
+        if (SynchronizationContext.Current == _uiContext)
+        {
+            if (!ShellDisposed)
+            {
+                action();
+            }
+
+            return;
+        }
+
+        _uiContext.Send(_ =>
+        {
+            if (!ShellDisposed)
+            {
+                action();
+            }
+        }, null);
     }
 
     private void AddFavoriteFromPrompt()
@@ -579,17 +713,23 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private void QuitPlayer()
     {
-        var success = _mpvController.QuitPlayer(_settings);
-        if (success)
+        Task.Run(() =>
         {
-            ShowInfo("Player process told to quit.");
-        }
-        else
-        {
-            ShowError("Failed to quit the player.");
-        }
+            var success = _mpvController.QuitPlayer(_settings);
+            _uiContext.Post(_ =>
+            {
+                if (success)
+                {
+                    ShowInfo("Player process told to quit.");
+                }
+                else
+                {
+                    ShowError("Failed to quit the player.");
+                }
 
-        UpdateStatus();
+                UpdateStatus();
+            }, null);
+        });
     }
 
     private void ShowPlayerSettings()
@@ -602,8 +742,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
         var updatedSettings = form.BuildSettings(_settings);
         var restartWebServer = updatedSettings.ApiPort != _settings.ApiPort;
-        CopySettings(updatedSettings, _settings);
-        _settingsStore.Save(_settings);
+        _settingsStore.ReplaceFrom(_settings, updatedSettings);
         _settingsPathItem.Text = $"Settings file: {_settingsStore.GetSettingsPath()}";
         if (restartWebServer)
         {
@@ -642,39 +781,38 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private void ClearFavorites()
     {
-        _settings.Favorites.Clear();
-        _settingsStore.Save(_settings);
+        _settingsStore.Update(_settings, current => current.Favorites.Clear());
         RefreshSavedMenus();
         ShowInfo("Favorites cleared.");
     }
 
     private void ClearRecent()
     {
-        _settings.RecentUrls.Clear();
-        _settingsStore.Save(_settings);
+        _settingsStore.Update(_settings, current => current.RecentUrls.Clear());
         RefreshSavedMenus();
         ShowInfo("Recent history cleared.");
     }
 
     private void UpsertFavorite(string url, string name)
     {
-        var existing = _settings.Favorites.FirstOrDefault(item => string.Equals(item.Url, url, StringComparison.OrdinalIgnoreCase));
-        if (existing is null)
+        _settingsStore.Update(_settings, current =>
         {
-            _settings.Favorites.Add(new SavedUrlEntry
+            var existing = current.Favorites.FirstOrDefault(item => string.Equals(item.Url, url, StringComparison.OrdinalIgnoreCase));
+            if (existing is null)
             {
-                Name = name,
-                Url = url,
-                LastPlayedAtUtc = DateTime.UtcNow,
-            });
-        }
-        else
-        {
-            existing.Name = name;
-            existing.LastPlayedAtUtc = DateTime.UtcNow;
-        }
-
-        _settingsStore.Save(_settings);
+                current.Favorites.Add(new SavedUrlEntry
+                {
+                    Name = name,
+                    Url = url,
+                    LastPlayedAtUtc = DateTime.UtcNow,
+                });
+            }
+            else
+            {
+                existing.Name = name;
+                existing.LastPlayedAtUtc = DateTime.UtcNow;
+            }
+        });
         RefreshSavedMenus();
     }
 
@@ -701,40 +839,48 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private void RecordSuccessfulPlay(string url, string? name = null)
     {
-        var existingRecent = _settings.RecentUrls.FirstOrDefault(item => string.Equals(item.Url, url, StringComparison.OrdinalIgnoreCase));
-        var resolvedName = !string.IsNullOrWhiteSpace(name) ? name.Trim() : existingRecent?.Name ?? BuildFriendlyName(url);
-        if (existingRecent is not null
-            && ReferenceEquals(existingRecent, _settings.RecentUrls.FirstOrDefault())
-            && string.Equals(existingRecent.Name, resolvedName, StringComparison.Ordinal))
+        var changed = false;
+        _settingsStore.UpdateIfChanged(_settings, current =>
         {
-            return;
-        }
+            var existingRecent = current.RecentUrls.FirstOrDefault(item => string.Equals(item.Url, url, StringComparison.OrdinalIgnoreCase));
+            var resolvedName = !string.IsNullOrWhiteSpace(name) ? name.Trim() : existingRecent?.Name ?? BuildFriendlyName(url);
+            if (existingRecent is not null
+                && ReferenceEquals(existingRecent, current.RecentUrls.FirstOrDefault())
+                && string.Equals(existingRecent.Name, resolvedName, StringComparison.Ordinal))
+            {
+                return false;
+            }
 
-        if (existingRecent is not null)
-        {
-            _settings.RecentUrls.Remove(existingRecent);
-        }
+            if (existingRecent is not null)
+            {
+                current.RecentUrls.Remove(existingRecent);
+            }
 
-        _settings.RecentUrls.Insert(0, new SavedUrlEntry
-        {
-            Name = resolvedName,
-            Url = url,
-            LastPlayedAtUtc = DateTime.UtcNow,
+            current.RecentUrls.Insert(0, new SavedUrlEntry
+            {
+                Name = resolvedName,
+                Url = url,
+                LastPlayedAtUtc = DateTime.UtcNow,
+            });
+
+            if (current.RecentUrls.Count > MaxRecentHistory)
+            {
+                current.RecentUrls = current.RecentUrls.Take(MaxRecentHistory).ToList();
+            }
+
+            var favorite = current.Favorites.FirstOrDefault(item => string.Equals(item.Url, url, StringComparison.OrdinalIgnoreCase));
+            if (favorite is not null)
+            {
+                favorite.LastPlayedAtUtc = DateTime.UtcNow;
+            }
+
+            changed = true;
+            return true;
         });
-
-        if (_settings.RecentUrls.Count > MaxRecentHistory)
+        if (changed)
         {
-            _settings.RecentUrls = _settings.RecentUrls.Take(MaxRecentHistory).ToList();
+            RefreshSavedMenus();
         }
-
-        var favorite = _settings.Favorites.FirstOrDefault(item => string.Equals(item.Url, url, StringComparison.OrdinalIgnoreCase));
-        if (favorite is not null)
-        {
-            favorite.LastPlayedAtUtc = DateTime.UtcNow;
-        }
-
-        _settingsStore.Save(_settings);
-        RefreshSavedMenus();
     }
 
     private void RefreshSavedMenus()
@@ -757,19 +903,28 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private void RunPlayerAction(string successMessage, Action<MpvController> action, Action? onSuccess = null)
     {
-        try
+        Task.Run(() =>
         {
-            action(_mpvController);
-            onSuccess?.Invoke();
-            ShowInfo(successMessage);
-        }
-        catch (Exception ex)
-        {
-            ShowError(ex.Message);
-            Log(ex.ToString());
-        }
-
-        UpdateStatus();
+            try
+            {
+                _mpvController.InvokeExclusive(() => action(_mpvController));
+                _uiContext.Post(_ =>
+                {
+                    onSuccess?.Invoke();
+                    ShowInfo(successMessage);
+                    UpdateStatus();
+                }, null);
+            }
+            catch (Exception ex)
+            {
+                _uiContext.Post(_ =>
+                {
+                    ShowError(ex.Message);
+                    Log(ex.ToString());
+                    UpdateStatus();
+                }, null);
+            }
+        });
     }
 
     private void UpdateStatus()
@@ -794,6 +949,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             _uiContext.Post(_ =>
             {
+                if (ShellDisposed)
+                {
+                    _statusUpdateInProgress = false;
+                    return;
+                }
+
                 try
                 {
                     if (task.IsFaulted)
@@ -816,6 +977,11 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private void ApplyStatus(PlayerStatus? status, bool resumed)
     {
+        if (ShellDisposed)
+        {
+            return;
+        }
+
         if (status is null)
         {
             _displaySleepBlocker.SetPlaybackActive(false);
@@ -922,7 +1088,7 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private void QueueAudioOutputRecovery(string reason, bool wakeDisplay = false)
     {
-        if (_isExiting || Interlocked.Exchange(ref _outputRecoveryQueued, 1) == 1)
+        if (_isExiting || !_recoveryWake.TryBegin(wakeDisplay))
         {
             return;
         }
@@ -931,15 +1097,19 @@ internal sealed class TrayApplicationContext : ApplicationContext
         {
             if (_isExiting)
             {
+                _recoveryWake.Complete();
                 return;
             }
 
-            Interlocked.Exchange(ref _outputRecoveryQueued, 0);
-            if (wakeDisplay)
+            if (_recoveryWake.ConsumeWake())
             {
                 _displaySleepBlocker.WakeDisplay();
             }
 
+            while (_recoveryWake.Complete())
+            {
+                _displaySleepBlocker.WakeDisplay();
+            }
             if (_outputRecoveryTimer.Enabled)
             {
                 return;
@@ -954,6 +1124,12 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private void OnOutputRecoveryTimerTick(object? sender, EventArgs eventArgs)
     {
+        if (_isExiting || ShellDisposed)
+        {
+            _outputRecoveryTimer.Stop();
+            return;
+        }
+
         _outputRecoveryTimer.Stop();
 
         if (_isMenuOpen)
@@ -1020,11 +1196,21 @@ internal sealed class TrayApplicationContext : ApplicationContext
 
     private void ShowInfo(string message)
     {
+        if (ShellDisposed)
+        {
+            return;
+        }
+
         _notifyIcon.ShowBalloonTip(2000, Branding.AppName, message, ToolTipIcon.Info);
     }
 
     private void ShowError(string message)
     {
+        if (ShellDisposed)
+        {
+            return;
+        }
+
         _notifyIcon.ShowBalloonTip(2500, Branding.AppName, message, ToolTipIcon.Error);
     }
 
@@ -1105,31 +1291,16 @@ internal sealed class TrayApplicationContext : ApplicationContext
             return;
         }
 
-        _settings.SelectedAudioDeviceId = device.Id;
-        _settings.SelectedAudioDeviceName = device.FriendlyName;
-        _settingsStore.Save(_settings);
+        _settingsStore.Update(_settings, current =>
+        {
+            current.SelectedAudioDeviceId = device.Id;
+            current.SelectedAudioDeviceName = device.FriendlyName;
+        });
     }
 
     private void RefreshAudioOutputsMenuSoon()
     {
         QueueAudioOutputRecovery("the saved audio output is unavailable");
-    }
-
-    private static void CopySettings(AppSettings source, AppSettings destination)
-    {
-        destination.SelectedAudioDeviceId = source.SelectedAudioDeviceId;
-        destination.SelectedAudioDeviceName = source.SelectedAudioDeviceName;
-        destination.MpvPath = source.MpvPath;
-        destination.YtDlpPath = source.YtDlpPath;
-        destination.YtDlpBrowser = source.YtDlpBrowser;
-        destination.MpvPipeName = source.MpvPipeName;
-        destination.MpvLogFilePath = source.MpvLogFilePath;
-        destination.ApiPort = source.ApiPort;
-        destination.ApiKey = source.ApiKey;
-        destination.VolumeStep = source.VolumeStep;
-        destination.MaxRecentUrls = source.MaxRecentUrls;
-        destination.Favorites = source.Favorites;
-        destination.RecentUrls = source.RecentUrls;
     }
 
     private void StartWebServer()
@@ -1145,17 +1316,39 @@ internal sealed class TrayApplicationContext : ApplicationContext
         }
     }
 
-    private void RestartWebServer()
+    private async void RestartWebServer()
     {
         try
         {
-            _webServerService.RestartAsync().GetAwaiter().GetResult();
-            ShowInfo($"Web UI/API restarted on port {_settings.ApiPort}.");
+            var error = await _webLifecycle.RestartAsync(_webServerService, Log);
+            if (ShellDisposed)
+            {
+                return;
+            }
+
+            if (error is null)
+            {
+                ShowInfo($"Web UI/API restarted on port {_settings.ApiPort}.");
+            }
+            else
+            {
+                ShowError($"Web UI/API restart failed: {error.Message}");
+            }
         }
         catch (Exception ex)
         {
-            Log(ex.ToString());
-            ShowError($"Web UI/API restart failed: {ex.Message}");
+            try
+            {
+                Log(ex.ToString());
+            }
+            catch
+            {
+            }
+
+            if (!ShellDisposed)
+            {
+                ShowError($"Web UI/API restart failed: {ex.Message}");
+            }
         }
     }
 

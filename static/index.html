@@ -565,6 +565,11 @@
         
         <div class="card play-card">
             <div class="form-group">
+                <label for="apiKeyInput">API key</label>
+                <input type="password" id="apiKeyInput" placeholder="Required when the relay has an API key" autocomplete="off">
+                <button class="btn btn-control btn-small" type="button" onclick="saveApiKey()">Save key</button>
+            </div>
+            <div class="form-group">
                 <label>YouTube URL</label>
                 <input type="text" id="urlInput" placeholder="https://www.youtube.com/watch?v=...">
             </div>
@@ -664,9 +669,20 @@
         let favoritesByUrl = new Set();
         
         function getHeaders() {
-            return {
+            const headers = {
                 'Content-Type': 'application/json'
             };
+            const apiKey = (localStorage.getItem('wintuberelay-api-key') || '').trim();
+            if (apiKey) {
+                headers['x-api-key'] = apiKey;
+            }
+            return headers;
+        }
+
+        function saveApiKey() {
+            const input = document.getElementById('apiKeyInput');
+            localStorage.setItem('wintuberelay-api-key', (input.value || '').trim());
+            showMessage('API key saved in this browser.');
         }
 
         function setButtonIcon(button, iconName, label) {
